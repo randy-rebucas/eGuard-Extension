@@ -1,0 +1,37 @@
+{
+  "name": "eguard-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @eguard/extension",
+    "build": "npm run build -w @eguard/extension",
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test",
+    "lint": "eslint .",
+    "typecheck": "tsc -b && tsc -p tsconfig.tools.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.63.0",
+    "@types/chrome": "^0.3.3",
+    "@types/node": "^24.19.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,81 @@
+import { z } from "zod";
+
+/**
+ * A host name as the policy engine stores it: lower-case, no scheme, port, path or trailing dot.
+ * Wildcards are implied (a rule for example.com also covers www.example.com).
+ */
+export const Domain = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(253)
+  .regex(/^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/, "Not a valid domain");
+export type Domain = z.infer<typeof Domain>;
+
+export const WebCategory = z.enum([
+  "ADULT",
+  "GAMBLING",
+  "MALWARE",
+  "PHISHING",
+  "VIOLENCE",
+  "DRUGS",
+  "WEAPONS",
+  "HATE",
+  "DATING",
+  "SOCIAL_MEDIA",
+  "GAMING",
+  "STREAMING",
+  "SHOPPING",
+  "DOWNLOADS",
+]);
+export type WebCategory = z.infer<typeof WebCategory>;
+
+const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM");
+
+export const UnknownSitesPolicy = z.enum(["ALLOW", "WARN", "BLOCK"]);
+
+/**
+ * The browser policy the backend sends. Versioned: the extension only ever moves forward,
+ * and keeps the last valid one when offline (see docs/ARCHITECTURE.md §Offline).
+ * Enforcement arrives in Phase 3/4; the schema is fixed now so the API contract is settled.
+ */
+export const BrowserProtectionPolicy = z.object({
+  id: z.string().min(1),
+  childId: z.string().min(1),
+  installationId: z.string().min(1),
+  version: z.number().int().positive(),
+  safeBrowsing: z.boolean(),
+  safeSearch: z.boolean(),
+  blockedCategories: z.array(WebCategory).max(WebCategory.options.length),
+  blockedDomains: z.array(Domain).max(5000),
+  allowedDomains: z.array(Domain).max(5000),
+  unknownSitesPolicy: UnknownSitesPolicy,
+  schedule: z
+    .object({
+      enabled: z.boolean(),
+      /** Protection is tightened (unknown sites blocked) between these times. */
+      startTime: HHMM,
+      endTime: HHMM,
+      timezone: z.string().min(1).max(64),
+    })
+    .nullable(),
+  /** Parent-approved exceptions (from access requests) until a time. The extension ignores expired ones. */
+  temporaryAllows: z.array(z.object({ domain: Domain, until: z.iso.datetime({ offset: true }) })).max(500),
+  /**
+   * Sites on eGuard's lists for the categories this family blocks (only those). Signed with the policy.
+   * No defaults or transforms here: the signature is checked over exactly what was parsed.
+   */
+  categoryDomains: z.partialRecord(WebCategory, z.array(Domain).max(50_000)),
+  updatedAt: z.iso.datetime({ offset: true }),
+});
+export type BrowserProtectionPolicy = z.infer<typeof BrowserProtectionPolicy>;
+
+/** What GET /api/browser/v1/policy returns: the policy plus eGuard's signature over its canonical JSON. */
+export const PolicyEnvelope = z.object({
+  policy: BrowserProtectionPolicy,
+  /** base64 ECDSA P-256 / SHA-256, raw r||s */
+  signature: z.string().min(1).max(200),
+  /** First 16 hex chars of SHA-256 of the signing public key, for diagnostics and rotation */
+  keyId: z.string().max(64),
+});
+export type PolicyEnvelope = z.infer<typeof PolicyEnvelope>;

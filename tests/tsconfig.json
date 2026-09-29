@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": ".tsbuild",
+    "rootDir": ".",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node", "chrome"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": [".tsbuild"],
+  "references": [{ "path": "../packages/schemas" }, { "path": "../packages/policy-engine" }]
+}

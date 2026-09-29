@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": ".tsbuild",
+    "rootDir": ".",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["chrome", "vite/client", "node"]
+  },
+  "include": ["src", "scripts"],
+  "references": [
+    { "path": "../../packages/schemas" },
+    { "path": "../../packages/browser-adapter" },
+    { "path": "../../packages/api-client" },
+    { "path": "../../packages/policy-engine" }
+  ]
+}

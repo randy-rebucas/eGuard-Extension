@@ -1,0 +1,151 @@
+@import "tailwindcss";
+@import "@fontsource-variable/hanken-grotesk";
+@import "@fontsource-variable/sora";
+
+/* Tokens mirror the eGuard web app (src/app/globals.css) so the extension reads as the same product. */
+:root {
+  color-scheme: light;
+  --bg: #f5faff;
+  --surface: #ffffff;
+  --surface-2: #f3f8fe;
+  --surface-3: #e9f3fd;
+  --line: #e2ecf7;
+  --line-strong: #ccddef;
+  --ink: #0b2348;
+  --ink-2: #34496a;
+  /* Darker than the web app's #62769a, which is 4.37:1 on --bg (fails WCAG AA); this is 4.9:1 */
+  --ink-3: #5a6e92;
+  --accent: #2498f3;
+  --accent-ink: #1570c0;
+  --accent-btn: #1673c4;
+  --accent-btn-hover: #0f63ac;
+  --accent-soft: #e7f4ff;
+  --ok: #18a957;
+  --ok-ink: #0f7f43;
+  --ok-soft: #e4f6ec;
+  --warn: #f4a62a;
+  --warn-ink: #94580a;
+  --warn-soft: #fef3e0;
+  --crit: #ef5350;
+  --crit-ink: #b92e2a;
+  --crit-soft: #fdebea;
+  --muted-soft: #eef2f7;
+  --navy-1: #0b2348;
+  --navy-3: #173766;
+  --shadow: 0 1px 2px rgba(11, 35, 72, 0.04), 0 8px 24px -12px rgba(11, 35, 72, 0.12);
+  --shadow-lg: 0 24px 60px -20px rgba(11, 35, 72, 0.35);
+  --hero:
+    radial-gradient(120% 90% at 0% 0%, #e7f4ff 0%, rgba(231, 244, 255, 0) 60%),
+    linear-gradient(180deg, #ffffff 0%, #f3f8fe 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #071226;
+    --surface: #0e1c35;
+    --surface-2: #12233f;
+    --surface-3: #172c4e;
+    --line: #1d3256;
+    --line-strong: #2a4470;
+    --ink: #eaf3ff;
+    --ink-2: #b6c7e0;
+    --ink-3: #8a9ebe;
+    --accent: #4aa8f5;
+    --accent-ink: #79bff8;
+    --accent-btn: #1e7ad0;
+    --accent-btn-hover: #2a88de;
+    --accent-soft: #11294b;
+    --ok: #3cc57a;
+    --ok-ink: #5fd595;
+    --ok-soft: #0f3026;
+    --warn: #f6b24a;
+    --warn-ink: #f7c06a;
+    --warn-soft: #352812;
+    --crit: #ff6f6b;
+    --crit-ink: #ff8e8a;
+    --crit-soft: #3a1a20;
+    --muted-soft: #16243c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 10px 28px -14px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
+    --hero:
+      radial-gradient(120% 90% at 0% 0%, #15335c 0%, rgba(21, 51, 92, 0) 60%),
+      linear-gradient(180deg, #0e1c35 0%, #0b1830 100%);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-btn: var(--accent-btn);
+  --color-accent-btn-hover: var(--accent-btn-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-ink: var(--ok-ink);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-soft: var(--warn-soft);
+  --color-crit: var(--crit);
+  --color-crit-ink: var(--crit-ink);
+  --color-crit-soft: var(--crit-soft);
+  --color-muted-soft: var(--muted-soft);
+  --font-sans:
+    "Hanken Grotesk Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Sora Variable", "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --shadow-card: var(--shadow);
+  --shadow-lift: var(--shadow-lg);
+  --ease-out-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+.eg-hero {
+  background: var(--hero);
+}
+
+@keyframes eg-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+.eg-pulse {
+  animation: eg-pulse 2.4s var(--ease-out-soft) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

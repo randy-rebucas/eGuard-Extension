@@ -1,0 +1,11 @@
+﻿{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": ".tsbuild",
+    "rootDir": "src",
+    "lib": ["ES2023", "DOM"],
+    "types": ["chrome", "node"]
+  },
+  "include": ["src"],
+  "references": [{ "path": "../schemas" }]
+}

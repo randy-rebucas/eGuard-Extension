@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.tsbuild/
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/
+*.zip
+*.xpi
+dist-e2e/
+dist-real/

@@ -1,0 +1,13 @@
+{
+  "name": "@eguard/browser-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@eguard/schemas": "0.1.0",
+    "zod": "^4.6.5"
+  }
+}

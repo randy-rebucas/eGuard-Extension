@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/schemas" },
+    { "path": "packages/browser-adapter" },
+    { "path": "packages/api-client" },
+    { "path": "packages/policy-engine" },
+    { "path": "apps/extension" },
+    { "path": "tests" }
+  ]
+}
