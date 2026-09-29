@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { ArrowLeft, Clock, Hand, Send, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Ban, Clock, Lock, Send, Sprout, Tag, UserRound, type LucideIcon } from "lucide-react";
 import type { BlockInfo } from "@eguard/schemas";
+import { categoryVisual } from "../shared/categories.ts";
 import { send } from "../shared/messaging.ts";
 import { Button, Card, LogoMark } from "../ui/components.tsx";
 
@@ -130,33 +131,56 @@ export function Blocked() {
 
   const { title, body } = explain(info);
   const request = info.request;
+  const focus = info.reason?.type === "FOCUS_HOURS";
+  const facts: { Icon: LucideIcon; label: string; value: string; sub?: string }[] = [
+    { Icon: Tag, label: "Reason", value: reasonLabel(info) },
+    ...(info.childName
+      ? [{ Icon: UserRound, label: "Profile", value: info.childName, sub: "This browser" }]
+      : []),
+    {
+      Icon: Clock,
+      label: "Time",
+      value: new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+      sub: new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+    },
+  ];
   return (
     <Shell>
-      <div className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent-ink">
-        {info.reason?.type === "FOCUS_HOURS" ? (
-          <Clock className="size-6" aria-hidden="true" />
-        ) : (
-          <Hand className="size-6" aria-hidden="true" />
-        )}
-      </div>
-      <h1 className="mt-4 font-display text-2xl font-semibold tracking-tight">{title}</h1>
-      <p className="mt-2 inline-block max-w-full rounded-md bg-surface-2 px-2 py-1 font-mono text-sm break-all text-ink-2">
+      <Illustration focus={focus} />
+      <h1 className="mt-6 font-display text-[28px] leading-tight font-semibold tracking-tight">{title}</h1>
+      <p className="mx-auto mt-3 max-w-[440px] text-[15px] leading-relaxed text-ink-2">{body}</p>
+      <p className="mt-3 inline-block max-w-full rounded-md bg-surface-2 px-2 py-1 font-mono text-sm break-all text-ink-2">
         {info.host}
       </p>
-      <p className="mt-3 text-[15px] leading-relaxed text-ink-2">{body}</p>
 
-      <div className="mt-6 flex flex-wrap gap-3">
-        <Button variant="secondary" onClick={goBack}>
+      <ul className={`mt-7 grid gap-3 text-left ${facts.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+        {facts.map(({ Icon, label, value, sub }) => (
+          <li
+            key={label}
+            className="flex items-start gap-3 rounded-[12px] border border-line bg-surface p-3.5"
+          >
+            <Icon className="mt-0.5 size-5 shrink-0 text-ink-3" aria-hidden="true" />
+            <p className="min-w-0 leading-snug">
+              <span className="block text-xs text-ink-3">{label}</span>
+              <span className="mt-0.5 block text-sm font-semibold break-words">{value}</span>
+              {sub ? <span className="block text-xs text-ink-3">{sub}</span> : null}
+            </p>
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-7 flex flex-wrap justify-center gap-3">
+        <Button className="min-w-[150px]" onClick={goBack}>
           <ArrowLeft className="size-4" aria-hidden="true" /> Go back
         </Button>
         {info.decision === "WARN" ? (
-          <Button busy={busy === "continue"} onClick={() => void run("continue")}>
+          <Button variant="secondary" busy={busy === "continue"} onClick={() => void run("continue")}>
             Continue to site
           </Button>
         ) : null}
       </div>
 
-      <section className="mt-8 border-t border-line pt-6" aria-labelledby="need-access">
+      <section className="mt-8 border-t border-line pt-6 text-left" aria-labelledby="need-access">
         <h2 id="need-access" className="text-sm font-semibold">
           Need this website?
         </h2>
@@ -234,19 +258,67 @@ export function Blocked() {
   );
 }
 
+/** A short label for the fact cards; the sentence above carries the explanation. */
+function reasonLabel(info: BlockInfo): string {
+  const r = info.reason;
+  if (info.decision === "WARN") return "New website";
+  switch (r?.type) {
+    case "CATEGORY":
+      return categoryVisual(r.category).label;
+    case "FOCUS_HOURS":
+      return "Focus time";
+    case "UNKNOWN_SITE":
+      return "Not on your list";
+    default:
+      return "Family setting";
+  }
+}
+
+/** Shield with a lock (or clock during focus time), on a soft cloud. Decorative. */
+function Illustration({ focus }: { focus: boolean }) {
+  return (
+    <div className="relative mx-auto h-[150px] w-[240px]" aria-hidden="true">
+      <div className="absolute inset-x-0 bottom-2 h-[88px] rounded-full bg-accent-soft blur-[2px]" />
+      <div className="absolute bottom-6 left-3 size-16 rounded-full bg-surface-3" />
+      <div className="absolute right-4 bottom-8 size-14 rounded-full bg-surface-3" />
+      <svg viewBox="0 0 64 64" className="absolute left-1/2 top-0 h-[140px] -translate-x-1/2 drop-shadow-lg">
+        <defs>
+          <linearGradient id="eg-shield" x1="10" y1="6" x2="54" y2="58" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#8BE0FF" />
+            <stop offset=".55" stopColor="#4AA8F5" />
+            <stop offset="1" stopColor="#1E7AD0" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M32 4C24.4 8 16.4 10.2 8.5 11.2V30c0 14.6 9.8 25.4 23.5 30 13.7-4.6 23.5-15.4 23.5-30V11.2C47.6 10.2 39.6 8 32 4Z"
+          fill="url(#eg-shield)"
+          opacity=".9"
+        />
+      </svg>
+      <div className="absolute left-1/2 top-[42px] grid size-14 -translate-x-1/2 place-items-center rounded-2xl bg-[#1560db] text-white shadow-lift">
+        {focus ? <Clock className="size-7" /> : <Lock className="size-7" />}
+      </div>
+      <div className="absolute right-6 bottom-9 grid size-10 place-items-center rounded-xl border border-line bg-surface shadow-card">
+        <Ban className="size-6 text-crit" />
+      </div>
+    </div>
+  );
+}
+
 function Shell({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg px-4 py-12">
-      <main className="mx-auto w-full max-w-[560px]">
-        <div className="mb-5 flex items-center gap-2 text-sm text-ink-3">
-          <LogoMark size={24} />
-          <span className="font-display font-semibold text-ink">eGuard</span>
-          <span aria-hidden="true">·</span>
-          <span className="inline-flex items-center gap-1">
-            <ShieldCheck className="size-4" aria-hidden="true" /> Family protection
-          </span>
-        </div>
-        <Card className="p-6 sm:p-8">{children}</Card>
+    <div className="eg-page min-h-screen px-4 py-10 sm:py-14">
+      <main className="mx-auto w-full max-w-[720px]">
+        <Card className="px-5 py-8 text-center sm:px-10 sm:py-10">
+          <div className="mb-6 flex items-center justify-center gap-2">
+            <LogoMark size={30} />
+            <span className="font-display text-xl font-semibold tracking-tight">eGuard</span>
+          </div>
+          {children}
+        </Card>
+        <p className="mt-5 flex items-center justify-center gap-1.5 text-sm text-ink-3">
+          <Sprout className="size-4 text-ok" aria-hidden="true" /> Your family cares about your safety online.
+        </p>
       </main>
     </div>
   );

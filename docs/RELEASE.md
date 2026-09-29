@@ -1,6 +1,6 @@
 # Release
 
-Not ready for store submission until Phase 8. This is the checklist to get there.
+Not ready for store submission until Phase 8. This is the checklist to get there; [PUBLISHING.md](PUBLISHING.md) is the step-by-step store submission guide (accounts, listing text, permission justifications, data disclosures, reviewer notes).
 
 ## Versioning
 

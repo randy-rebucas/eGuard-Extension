@@ -136,6 +136,48 @@ export function Button({
   );
 }
 
+/** The child's initials on a soft disc. eGuard has no photos of children and doesn't want any. */
+export function Avatar({ name, size = 44 }: { name: string; size?: number }) {
+  const initials =
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "?";
+  return (
+    <span
+      aria-hidden="true"
+      style={{ width: size, height: size, fontSize: size * 0.38 }}
+      className="grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#2394f5] to-[#1560db] font-display font-semibold text-white shadow-card ring-2 ring-surface"
+    >
+      {initials}
+    </span>
+  );
+}
+
+/**
+ * Looks like a switch but only reports: settings are changed by parents in the dashboard, so
+ * nothing in the child's browser is operable. Screen readers get the plain state.
+ */
+export function StateSwitch({ on, label }: { on: boolean; label: string }) {
+  return (
+    <span className="inline-flex items-center">
+      <span className="sr-only">
+        {label}: {on ? "on" : "off"}
+      </span>
+      <span
+        aria-hidden="true"
+        className={`relative inline-block h-6 w-10 rounded-full transition-colors ${on ? "bg-ok" : "bg-line-strong"}`}
+      >
+        <span
+          className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${on ? "left-[18px]" : "left-0.5"}`}
+        />
+      </span>
+    </span>
+  );
+}
+
 export function Card({ className = "", children }: { className?: string; children: ReactNode }) {
   return (
     <div className={`rounded-[14px] border border-line bg-surface shadow-card ${className}`}>{children}</div>

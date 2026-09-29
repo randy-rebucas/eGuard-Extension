@@ -37,6 +37,9 @@
   --hero:
     radial-gradient(120% 90% at 0% 0%, #e7f4ff 0%, rgba(231, 244, 255, 0) 60%),
     linear-gradient(180deg, #ffffff 0%, #f3f8fe 100%);
+  --page:
+    radial-gradient(80% 60% at 50% 0%, #e3f1ff 0%, rgba(227, 241, 255, 0) 70%),
+    linear-gradient(180deg, #f5faff 0%, #eef5fd 100%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -71,6 +74,9 @@
     --hero:
       radial-gradient(120% 90% at 0% 0%, #15335c 0%, rgba(21, 51, 92, 0) 60%),
       linear-gradient(180deg, #0e1c35 0%, #0b1830 100%);
+    --page:
+      radial-gradient(80% 60% at 50% 0%, #11294b 0%, rgba(17, 41, 75, 0) 70%),
+      linear-gradient(180deg, #071226 0%, #081631 100%);
   }
 }
 
@@ -123,6 +129,10 @@
 
 .eg-hero {
   background: var(--hero);
+}
+
+.eg-page {
+  background: var(--page);
 }
 
 @keyframes eg-pulse {

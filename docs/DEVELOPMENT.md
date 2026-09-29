@@ -41,7 +41,7 @@ Values are validated at build time (`apps/extension/src/config/env.ts`); a bad v
 
 **Firefox:** open `about:debugging#/runtime/this-firefox`, _Load Temporary Add-on_, choose `dist/firefox/manifest.json`. Temporary add-ons are removed when Firefox closes. Firefox 128+ is required.
 
-Running against the real backend needs the Phase 2 endpoints in `~/eguard`. Until then use the E2E mock: `node --experimental-strip-types -e "import('./tests/e2e/mock-backend.ts').then(m => m.startMockBackend(3299))"` and build with `VITE_API_URL=http://127.0.0.1:3299` (pairing code `824917`).
+Running against the real backend needs the Phase 2 endpoints in `~/eguard`. Without it, `npm run try` builds `dist-manual/chrome` against the E2E mock with a throwaway policy-signing key and keeps the mock running on `http://127.0.0.1:3299` (pairing code `824917`).
 
 ## Conventions
 

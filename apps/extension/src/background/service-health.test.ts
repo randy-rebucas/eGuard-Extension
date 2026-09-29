@@ -150,6 +150,15 @@ describe("daily counts", () => {
     expect(JSON.stringify({ ...rest, session: h.session.dump() })).not.toMatch(/example/);
   });
 
+  it("show today's counts in the popup, and only today's", async () => {
+    const h = await paired();
+    await h.state.blockCounts.set({ [daysAgo(1)]: { GAMING: 4 } });
+    await h.service.onNavigationError(1, "https://adult.example/x");
+    const s = await h.service.getStatus();
+    expect(s.policySummary?.blockedToday).toEqual({ ADULT: 1 });
+    expect(JSON.stringify(s)).not.toMatch(/example/);
+  });
+
   it("send finished days only, and forget what eGuard took or refused", async () => {
     const h = await paired({
       [EVENTS]: [

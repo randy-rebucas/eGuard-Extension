@@ -28,11 +28,17 @@ export const REPORT_EVERY_MS = 60 * 60_000;
 export const KEEP_COUNTS_DAYS = 14;
 
 /** Counts and switches only: the popup shows what kind of protection is set, never which sites. */
-export function summarize(p: BrowserProtectionPolicy, now: Date): PolicySummary {
+export function summarize(
+  p: BrowserProtectionPolicy,
+  now: Date,
+  blockedToday: Record<string, number> = {},
+): PolicySummary {
   return {
     safeSearch: p.safeSearch,
     safeBrowsing: p.safeBrowsing,
     blockedCategories: p.blockedCategories.length,
+    categories: [...p.blockedCategories],
+    blockedToday,
     blockedSites: p.blockedDomains.length,
     allowedSites: p.allowedDomains.length,
     otherSites: p.unknownSitesPolicy,
@@ -101,7 +107,7 @@ export function createService(d: ServiceDeps) {
   }
 
   async function getStatus(): Promise<ProtectionStatus> {
-    const [installation, policy, sync, health, privateWindowsAllowed, safeBrowsing, installType] =
+    const [installation, policy, sync, health, privateWindowsAllowed, safeBrowsing, installType, counts] =
       await Promise.all([
         d.state.installation.get(),
         loadPolicy(),
@@ -110,6 +116,7 @@ export function createService(d: ServiceDeps) {
         d.privateWindowsAllowed().catch(() => null),
         d.safeBrowsing ? d.safeBrowsing.get().catch(() => null) : null,
         d.installType().catch(() => null),
+        d.state.blockCounts.get(),
       ]);
     // Read back from the browser every time: what's installed must be exactly what the verified policy requires
     const rulesVerified = installation
@@ -132,7 +139,13 @@ export function createService(d: ServiceDeps) {
       supported: isSupportedBrowser(d.browser),
       installation,
       policyVersion,
-      policySummary: policy ? summarize(policy.policy, new Date(now())) : null,
+      policySummary: policy
+        ? summarize(
+            policy.policy,
+            new Date(now()),
+            counts?.[dayIn(policy.policy.schedule?.timezone, new Date(now()))] ?? {},
+          )
+        : null,
       rulesVerified,
       privateWindowsAllowed,
       sync,

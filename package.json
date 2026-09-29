@@ -12,6 +12,7 @@
     "build": "npm run build -w @eguard/extension",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
+    "try": "node scripts/try-extension.ts",
     "lint": "eslint .",
     "typecheck": "tsc -b && tsc -p tsconfig.tools.json",
     "format": "prettier --write .",

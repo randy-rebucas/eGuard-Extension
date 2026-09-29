@@ -30,14 +30,15 @@ Load `dist/chrome` as an unpacked extension, or `dist/firefox/manifest.json` as 
 
 ## Documentation
 
-|                                                                                                       |                                                                                                                      |
-| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                                                               | Assessment of the existing platform, components, trust model, status, sync/offline, screen map, plan, open decisions |
-| [BROWSER-CAPABILITIES.md](docs/BROWSER-CAPABILITIES.md)                                               | What eGuard can do per browser: Automatic / Guided / Verification only / Unsupported                                 |
-| [API.md](docs/API.md)                                                                                 | `/api/browser/v1` contract and the database changes for `~/eguard`                                                   |
-| [SECURITY.md](docs/SECURITY.md)                                                                       | Permissions (with reasons), threat model                                                                             |
-| [PRIVACY.md](docs/PRIVACY.md)                                                                         | What is and isn't collected                                                                                          |
-| [DEVELOPMENT.md](docs/DEVELOPMENT.md) · [TESTING.md](docs/TESTING.md) · [RELEASE.md](docs/RELEASE.md) | Working on, testing and shipping it                                                                                  |
+|                                                                                                       |                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                                                               | Assessment of the existing platform, components, trust model, status, sync/offline, screen map, plan, open decisions         |
+| [BROWSER-CAPABILITIES.md](docs/BROWSER-CAPABILITIES.md)                                               | What eGuard can do per browser: Automatic / Guided / Verification only / Unsupported                                         |
+| [API.md](docs/API.md)                                                                                 | `/api/browser/v1` contract and the database changes for `~/eguard`                                                           |
+| [SECURITY.md](docs/SECURITY.md)                                                                       | Permissions (with reasons), threat model                                                                                     |
+| [PRIVACY.md](docs/PRIVACY.md)                                                                         | What is and isn't collected                                                                                                  |
+| [DEVELOPMENT.md](docs/DEVELOPMENT.md) · [TESTING.md](docs/TESTING.md) · [RELEASE.md](docs/RELEASE.md) | Working on, testing and shipping it                                                                                          |
+| [PUBLISHING.md](docs/PUBLISHING.md)                                                                   | Submitting to the Chrome, Edge and Firefox stores: listing text, permission justifications, data disclosures, reviewer notes |
 
 ## Layout
 

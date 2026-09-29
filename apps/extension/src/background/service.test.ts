@@ -198,6 +198,8 @@ describe("policy signatures", () => {
       safeSearch: true,
       safeBrowsing: true,
       blockedCategories: 1,
+      categories: policy(2).blockedCategories,
+      blockedToday: {},
       blockedSites: 1,
       allowedSites: 2,
       otherSites: "WARN",

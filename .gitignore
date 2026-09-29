@@ -11,3 +11,5 @@ playwright-report/
 *.xpi
 dist-e2e/
 dist-real/
+dist-manual/
+release/

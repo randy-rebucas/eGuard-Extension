@@ -1,13 +1,17 @@
 import { z } from "zod";
 import { BrowserInfo } from "./browser.ts";
 import { CheckStatus } from "./capability.ts";
-import { UnknownSitesPolicy } from "./policy.ts";
+import { UnknownSitesPolicy, WebCategory } from "./policy.ts";
 
 /** The family's settings in force, for display. Counts only: the popup never lists sites. */
 export const PolicySummary = z.object({
   safeSearch: z.boolean(),
   safeBrowsing: z.boolean(),
   blockedCategories: z.number().int(),
+  /** Which categories the family blocks: kinds of site, never sites. */
+  categories: z.array(WebCategory),
+  /** Pages blocked so far today on this browser, per category or reason (the same counts eGuard receives). */
+  blockedToday: z.record(z.string(), z.number().int()),
   blockedSites: z.number().int(),
   allowedSites: z.number().int(),
   otherSites: UnknownSitesPolicy,
