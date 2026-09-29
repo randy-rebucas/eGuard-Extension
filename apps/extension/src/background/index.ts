@@ -4,10 +4,13 @@
  */
 import { createHttpClient, createTokenManager } from "@eguard/api-client";
 import {
+  capabilitiesFor,
   detectCurrentBrowser,
   extensionOrigin,
   getExtensionApi,
+  installType,
   memoryArea,
+  safeBrowsingSetting,
   sessionArea,
 } from "@eguard/browser-adapter";
 import { importPolicyKey, verifyPolicySignature, type DnrRule } from "@eguard/policy-engine";
@@ -15,6 +18,7 @@ import type { ProtectionStatus } from "@eguard/schemas";
 import { config } from "../config/runtime.ts";
 import { log } from "./diagnostics.ts";
 import { createEnforcement, type RulesApi } from "./enforcement.ts";
+import type { SafeBrowsingApi, SafeBrowsingLevel } from "./health.ts";
 import { handleMessage } from "./router.ts";
 import { createService } from "./service.ts";
 import { createState } from "./state.ts";
@@ -75,6 +79,22 @@ const enforcement = createEnforcement({
   log,
 });
 
+/** Where the capability matrix says eGuard keeps Safe Browsing on itself (Chrome), and the browser lets it. */
+const sbSetting =
+  capabilitiesFor(browser.family).find((c) => c.id === "BROWSER_SAFE_BROWSING")?.level === "AUTOMATIC"
+    ? safeBrowsingSetting(api)
+    : undefined;
+const safeBrowsing: SafeBrowsingApi | null = sbSetting
+  ? {
+      get: async () => {
+        const r = await sbSetting.get({});
+        return { value: r.value === true, level: r.levelOfControl as SafeBrowsingLevel };
+      },
+      set: (value) => sbSetting.set({ value }),
+      clear: () => sbSetting.clear({}),
+    }
+  : null;
+
 const BADGE: Record<ProtectionStatus["state"], { text: string; color: string }> = {
   PROTECTED: { text: "", color: "#18A957" },
   NEEDS_ATTENTION: { text: "!", color: "#F4A62A" },
@@ -113,6 +133,8 @@ const service = createService({
   openBlockPage: async (tabId, url) => {
     await api.tabs.update(tabId, { url: `${blockPage}?u=${encodeURIComponent(url)}` });
   },
+  safeBrowsing,
+  installType: () => installType(api),
   log,
   onStatus: (s) => updateBadge(s).catch((err: unknown) => log("badge_failed", { error: String(err) })),
 });
@@ -147,7 +169,7 @@ async function ensureAlarms() {
 
 api.alarms.onAlarm.addListener((alarm) => {
   void (async () => {
-    if (alarm.name === SYNC_ALARM && (await state.installation.get())) await service.syncPolicy();
+    if (alarm.name === SYNC_ALARM) await service.periodic();
     if (alarm.name === RULES_ALARM) await service.enforce();
     await service.getStatus();
   })().catch((err: unknown) => log("alarm_failed", { alarm: alarm.name, error: String(err) }));

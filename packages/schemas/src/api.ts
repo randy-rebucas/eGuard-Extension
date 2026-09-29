@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { CheckStatus } from "./capability.ts";
+import { HealthCheckId, ProtectionState } from "./status.ts";
 
 /**
  * Wire contract with the eGuard backend (/api/browser/v1). See docs/API.md.
@@ -48,3 +50,23 @@ export const AccessRequest = z.object({
 export type AccessRequest = z.infer<typeof AccessRequest>;
 export const AccessRequestEnvelope = z.object({ request: AccessRequest });
 export const AccessRequestList = z.object({ requests: z.array(AccessRequest) });
+
+/** POST /health: the state the popup shows, the policy version enforced, and each check's status. Nothing else. */
+export const HealthReport = z.object({
+  state: ProtectionState,
+  policyVersion: z.number().int().positive().nullable(),
+  checks: z.array(z.object({ id: HealthCheckId, status: CheckStatus })),
+});
+export type HealthReport = z.infer<typeof HealthReport>;
+export const HealthReportResponse = z.object({ ok: z.literal(true), score: z.number(), total: z.number() });
+
+/**
+ * POST /events: how many pages were blocked on one day (in the family's time zone), per category or reason
+ * (BLOCKED_SITE, UNKNOWN_SITE, FOCUS_HOURS). Never a site, never finer than a day.
+ */
+export const EventsReport = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  blocked: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type EventsReport = z.infer<typeof EventsReport>;
+export const EventsResponse = z.object({ ok: z.literal(true) });

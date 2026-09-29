@@ -1,4 +1,11 @@
-import type { BrowserInfo, Issue, PolicySummary, ProtectionState, ProtectionStatus } from "@eguard/schemas";
+import type {
+  BrowserInfo,
+  HealthCheck,
+  Issue,
+  PolicySummary,
+  ProtectionState,
+  ProtectionStatus,
+} from "@eguard/schemas";
 import type { Installation, SyncRecord } from "./state.ts";
 
 /** Without a successful sync for this long, the popup says sync is paused (protection stays on). */
@@ -24,6 +31,8 @@ export type StatusInput = {
   privateWindowsAllowed?: boolean | null;
   sync: SyncRecord | null;
   lastHealthCheckAt: string | null;
+  /** The self-checks (health.ts buildChecks), shown as they are; a failed Safe Browsing check also needs attention. */
+  checks?: HealthCheck[];
   now: number;
 };
 
@@ -61,6 +70,7 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
     policySummary: input.policySummary ?? null,
     lastSyncAt: sync?.lastSuccessAt ?? null,
     lastHealthCheckAt: input.lastHealthCheckAt,
+    checks: installation ? (input.checks ?? []) : [],
   };
   const result = (
     state: ProtectionState,
@@ -153,6 +163,14 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
           action: null,
         };
 
+  const sb = input.checks?.find((c) => c.id === "safe_browsing" && c.status === "ACTION_REQUIRED");
+  const attention: Issue[] = [
+    ...(privateIssue ? [privateIssue] : []),
+    ...(sb
+      ? [{ id: "safe-browsing", status: sb.status, title: sb.title, detail: sb.detail, action: null }]
+      : []),
+  ];
+
   const lastSuccess = sync?.lastSuccessAt ? Date.parse(sync.lastSuccessAt) : null;
   const stale = lastSuccess === null || input.now - lastSuccess > SYNC_STALE_MS;
   if (offline || stale) {
@@ -168,17 +186,19 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
           detail: sync?.lastError?.message ?? "No successful sync in the last day.",
           action: "SYNC_NOW",
         },
-        ...(privateIssue ? [privateIssue] : []),
+        ...attention,
       ],
     );
   }
 
-  if (privateIssue) {
+  if (attention.length) {
     return result(
       "NEEDS_ATTENTION",
       "Protection needs attention",
-      "Websites are protected in normal windows, but not in private ones.",
-      [privateIssue],
+      privateIssue && !sb
+        ? "Websites are protected in normal windows, but not in private ones."
+        : "Websites are protected, but part of this browser's protection needs a parent.",
+      attention,
     );
   }
 

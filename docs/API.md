@@ -2,7 +2,7 @@
 
 The contract between the extension and the eGuard backend (`~/eguard`). Zod schemas: [packages/schemas/src/api.ts](../packages/schemas/src/api.ts), [policy.ts](../packages/schemas/src/policy.ts).
 
-**Implemented in `~/eguard`:** `POST /pair`, `POST /token`, `GET /policy` (signed), `POST/GET /access-requests`, and for parents `GET/DELETE /api/mobile/v1/browsers[/:id]`, browser codes from `POST /api/mobile/v1/children/:id/pairing-code`, `GET/PUT /api/mobile/v1/children/:id/browser-policy`, `GET /api/mobile/v1/children/:id/browser-access-requests` and `POST /api/mobile/v1/browser-access-requests/:id` (plus the **Browser** tab on the web child page). Server code: `src/lib/browser-service.ts`, `browser-policy.ts`, `browser-access.ts`, `category-lists.ts`, `src/app/api/browser/v1/*`; tests: `tests/api/browser*.test.ts`. `/health` and `/events` are still to build.
+**Implemented in `~/eguard`:** `POST /pair`, `POST /token`, `GET /policy` (signed), `POST/GET /access-requests`, and for parents `GET/DELETE /api/mobile/v1/browsers[/:id]`, browser codes from `POST /api/mobile/v1/children/:id/pairing-code`, `GET/PUT /api/mobile/v1/children/:id/browser-policy`, `GET /api/mobile/v1/children/:id/browser-access-requests` and `POST /api/mobile/v1/browser-access-requests/:id` (plus the **Browser** tab on the web child page). Server code: `src/lib/browser-service.ts`, `browser-policy.ts`, `browser-access.ts`, `category-lists.ts`, `src/app/api/browser/v1/*`; tests: `tests/api/browser*.test.ts`. `POST /health` and `POST /events` (Phase 5): `src/lib/browser-health.ts`, tests in `tests/api/browser-health.test.ts`.
 
 Conventions match `/api/device/v1` and `/api/mobile/v1`: JSON, HTTPS, errors as `{ "error": "<parent-safe text>", "code": "<machine code>" }`, `X-eGuard-Client: chrome-extension | edge-extension | firefox-extension`.
 
@@ -66,21 +66,46 @@ Parents get a browser code with `POST /api/mobile/v1/children/:id/pairing-code` 
 - The extension verifies with the public key built in at build time (`VITE_POLICY_PUBLIC_KEY`), when the policy arrives **and every time it reads it from storage**. A policy that fails is refused (on arrival) or discarded and downloaded again (from storage); it is never enforced or shown. The private key is the server's `BROWSER_POLICY_SIGNING_KEY`; generate the pair with `node scripts/browser-policy-keys.mjs` in `~/eguard`. Rotating it means shipping an extension update with the new public key before switching the server.
 - Not yet: `If-None-Match` → `304`. The body is small and the poll is every 5 minutes, so it waits for real load data.
 
-### `POST /health` (Bearer, Phase 5)
+### `POST /health` (Bearer)
 
-The extension's own checks, each with a `CheckStatus`, plus the policy version it has applied:
+The extension's own checks, each with a `CheckStatus`, the state the popup shows, and the policy version it enforces. Sent after pairing, whenever the result changes (checked every 5 minutes), at least hourly, and when someone presses **Run health check**:
 
 ```json
 {
+  "state": "NEEDS_ATTENTION",
   "policyVersion": 42,
   "checks": [
+    { "id": "policy_signature", "status": "PASS" },
     { "id": "rules_installed", "status": "PASS" },
-    { "id": "private_windows", "status": "WARNING" }
+    { "id": "private_windows", "status": "WARNING" },
+    { "id": "sync_fresh", "status": "PASS" },
+    { "id": "safe_browsing", "status": "PASS" },
+    { "id": "force_installed", "status": "NOT_CONFIGURED" }
   ]
 }
 ```
 
-The server compares `policyVersion` with the current one (drift), stores the result, and raises/resolves alerts through the same `resolveKey` mechanism as `processReport`.
+`200 { ok: true, score, total }` (passing checks out of those that apply; `UNSUPPORTED` and `NOT_CONFIGURED` don't count) · `400 invalid_report` · `401` · `429` after 60 reports an hour. Unknown check ids are dropped, so a newer extension can add checks.
+
+| Check              | PASS                                          | Otherwise                                                                                                                  |
+| ------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `policy_signature` | a stored policy verifies                      | `ACTION_REQUIRED`: none yet, or the stored one was discarded                                                               |
+| `rules_installed`  | the browser's rules read back exactly         | `ACTION_REQUIRED`; `NOT_CONFIGURED` before the first policy                                                                |
+| `private_windows`  | allowed in private windows                    | `WARNING` (not allowed, with the browser's steps); `UNSUPPORTED` if the browser can't say                                  |
+| `sync_fresh`       | synced in the last day, eGuard reachable      | `WARNING`                                                                                                                  |
+| `safe_browsing`    | Chrome's Safe Browsing on                     | `ACTION_REQUIRED` (off and held by something else); `NOT_CONFIGURED` (family turned it off); `UNSUPPORTED` in Edge/Firefox |
+| `force_installed`  | `management.getSelf().installType` is `admin` | `NOT_CONFIGURED` (can be removed; guidance names the browser policy); `UNSUPPORTED` if unknown                             |
+
+The server stores each report (`BrowserHealthCheck`), sets `BrowserInstallation.protectionState` / `appliedPolicyVersion` / `lastHealthAt`, and raises or resolves `ATTENTION` alerts (category `PROTECTION`), each once while it lasts:
+
+| resolveKey                   | Raised when                                                                                                                                                               | Resolved when                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `BROWSER_DRIFT:<id>`         | "Browser protection changed": `rules_installed` fails, or `policyVersion` is below the current one more than 15 minutes after the change (a change in flight isn't drift) | a report on the current version with rules in place |
+| `BROWSER_PRIVATE:<id>`       | "Private windows aren't protected": `private_windows` is `WARNING`                                                                                                        | it passes                                           |
+| `BROWSER_SAFE_BROWSING:<id>` | "Malware and phishing protection is off": `safe_browsing` is `ACTION_REQUIRED`                                                                                            | any other status                                    |
+| `BROWSER_OFFLINE:<id>`       | "eGuard can't verify this browser" (category `DEVICES`): no contact for 24 hours (`OFFLINE_AFTER_MS`), raised by the maintenance job                                      | any authenticated request                           |
+
+Removing the browser resolves all of them. The web app's alert button opens the child's Browser tab.
 
 ### `POST /access-requests`, `GET /access-requests` (Bearer)
 
@@ -90,13 +115,13 @@ Parents answer with `POST /api/mobile/v1/browser-access-requests/:id` `{ "decisi
 
 **Policy fields added in Phase 4** (inside the signed policy): `temporaryAllows: [{ domain, until }]` (only unexpired ones are sent) and `categoryDomains: { <CATEGORY>: [domains] }` for the categories this family blocks. The lists come from `src/lib/category-lists.ts`, a small **starter set** of well-known sites per category, meant to be replaced by a maintained feed. Malware and phishing have no list; they're left to the browser's own protection (Safe Browsing / SmartScreen).
 
-### `POST /events` (Bearer, Phase 4)
+### `POST /events` (Bearer)
 
-Aggregated counts only: `{ "date": "2026-09-28", "blocked": { "GAMING": 3, "ADULT": 1 } }`. No URLs, domains or timestamps finer than a day.
+Aggregated counts only: `{ "date": "2026-09-28", "blocked": { "GAMING": 3, "ADULT": 1, "BLOCKED_SITE": 2 } }`. Keys are a category or a reason (`BLOCKED_SITE`, `UNKNOWN_SITE`, `FOCUS_HOURS`, pattern `^[A-Z][A-Z_]{1,31}$`, at most 24); no URLs, domains or timestamps finer than a day. `date` is the day in the family's time zone (the policy's `schedule.timezone`, else the browser's). The extension sends each finished day once; sending a day again replaces its counts. `200 { ok, date, categories }` · `400 invalid_report` · `400 invalid_date` (not a date, in the future beyond a day's slack, or older than 14 days; the extension drops such a day) · `429` after 30 an hour.
 
 ## Database changes
 
-`PairingKind`, `PairingCode.kind`/`deviceLabel` and `BrowserInstallation` are built (migration `20260929023525_browser_installations`); `~/eguard/prisma/schema.prisma` is authoritative for them, and as built `BrowserInstallation` holds the access-token hash and expiry instead of the `protectionState`/`appliedPolicyVersion` columns sketched below, which arrive with health reporting. The other models are proposals for Phases 3–5, reusing `Family`, `Child`, `Alert`, `AuditLog` and `RateLimit`:
+All of these are built (migrations `browser_installations`, `browser_policies`, `browser_access_requests`, `browser_health`); `~/eguard/prisma/schema.prisma` is authoritative and differs in details from the sketch below (for example `BrowserInstallation` also holds the access-token hash and `lastHealthAt`, and `BrowserHealthCheck` stores the reported `state`). They reuse `Family`, `Child`, `Alert`, `AuditLog` and `RateLimit`:
 
 ```prisma
 enum PairingKind { DEVICE BROWSER }
@@ -200,7 +225,7 @@ model BrowserEventDaily {
 }
 ```
 
-Also: add `WEB` to `AlertCategory` for access-request and browser-protection alerts (a mobile-API enum change; coordinate with the apps). Delete `BrowserHealthCheck` and `BrowserEventDaily` rows older than `Family.retentionDays` in the existing maintenance cron.
+Browser alerts use the existing `PROTECTION` and `DEVICES` categories; a separate `WEB` category would be a mobile-API enum change to coordinate with the apps (Phase 6). The maintenance cron deletes `BrowserHealthCheck` and `BrowserEventDaily` rows older than `Family.retentionDays`.
 
 ## Authorization chain
 

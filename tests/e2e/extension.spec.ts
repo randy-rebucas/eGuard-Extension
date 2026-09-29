@@ -70,7 +70,9 @@ test("pairing: a bad code shows the server's reason, a good code connects and do
   await expect(popup.getByText("Mia", { exact: true })).toBeVisible();
   await expect(popup.getByText("Version 1", { exact: true })).toBeVisible();
   // Rules are installed and verified; what's left is private windows, which Chromium doesn't allow by default
-  await expect(popup.getByText("Private windows aren't protected")).toBeVisible();
+  await expect(
+    popup.getByRole("list", { name: "Issues" }).getByText("Private windows aren't protected"),
+  ).toBeVisible();
   await expect(popup.getByText("Website protection not active")).toHaveCount(0);
 });
 
@@ -130,7 +132,9 @@ test("the options page is read-only and explains privacy", async ({ context, ext
   await expect(page.getByRole("button", { name: /disconnect|remove|turn off/i })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Privacy" })).toBeVisible();
   await expect(
-    page.getByText(/sites your child visits are not sent to eGuard, and eGuard keeps no record of which sites were blocked/),
+    page.getByText(
+      /sites your child visits are not sent to eGuard, and eGuard keeps no record of which sites were blocked/,
+    ),
   ).toBeVisible();
 });
 

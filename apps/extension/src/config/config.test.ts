@@ -43,7 +43,16 @@ describe("buildManifest", () => {
 
   it("requests only the minimum permissions, and never all sites", () => {
     const m = buildManifest({ target: "chrome", version: "1.2.3", env });
-    expect(m.permissions).toEqual(["storage", "alarms", "declarativeNetRequest", "webNavigation"]);
+    expect(m.permissions).toEqual(["storage", "alarms", "declarativeNetRequest", "webNavigation", "privacy"]);
+    // Safe Browsing can only be held on in Chrome; the other builds don't ask for `privacy`
+    for (const target of ["edge", "firefox"] as const) {
+      expect(buildManifest({ target, version: "1.2.3", env }).permissions).toEqual([
+        "storage",
+        "alarms",
+        "declarativeNetRequest",
+        "webNavigation",
+      ]);
+    }
     // The eGuard API, plus the search engines SafeSearch rewrites. Blocking itself needs no host access.
     expect(m.host_permissions).toEqual([
       "https://www.eguard.family/*",

@@ -7,6 +7,7 @@ import { canonicalJson, importPolicyKey, verifyPolicySignature } from "@eguard/p
 import type { BrowserInfo } from "@eguard/schemas";
 import type { DnrRule } from "@eguard/policy-engine";
 import { createEnforcement, type RulesApi } from "./enforcement.ts";
+import type { SafeBrowsingLevel } from "./health.ts";
 import { createService, type Service } from "./service.ts";
 import { createState, type State } from "./state.ts";
 
@@ -21,6 +22,9 @@ export type Harness = {
   /** The browser's rule store, as the fake declarativeNetRequest holds it. */
   browserRules: { dynamic: DnrRule[]; session: DnrRule[] };
   setPrivateWindows: (allowed: boolean | null) => void;
+  /** Chrome's Safe Browsing setting as the fake privacy API holds it (null: the browser has no such API). */
+  safeBrowsing: { value: boolean; level: SafeBrowsingLevel } | null;
+  setInstallType: (t: string | null) => void;
   log: Mock<(event: string, detail?: Record<string, unknown>) => void>;
 };
 
@@ -98,6 +102,10 @@ export function harness(
     setSession: async (r) => void (browserRules.session = structuredClone(r)),
   };
   let privateWindows: boolean | null = true;
+  let install: string | null = "normal";
+  // Only Chrome's row in the capability matrix holds Safe Browsing (index.ts decides the same way)
+  const sb: Harness["safeBrowsing"] =
+    browser.family === "chrome" ? { value: true, level: "controllable_by_this_extension" } : null;
   const enforcement = createEnforcement({ rules, session, alwaysAllow: ["app.test"], log });
   const service = createService({
     state,
@@ -113,6 +121,19 @@ export function harness(
     enforcement,
     privateWindowsAllowed: async () => privateWindows,
     openBlockPage,
+    safeBrowsing: sb
+      ? {
+          get: async () => ({ ...sb }),
+          set: async (value) => {
+            sb.value = value;
+            sb.level = "controlled_by_this_extension";
+          },
+          clear: async () => {
+            sb.level = "controllable_by_this_extension";
+          },
+        }
+      : null,
+    installType: async () => install,
     now: () => NOW,
     log,
   });
@@ -127,5 +148,7 @@ export function harness(
     openBlockPage,
     browserRules,
     setPrivateWindows: (allowed) => void (privateWindows = allowed),
+    safeBrowsing: sb,
+    setInstallType: (t) => void (install = t),
   };
 }

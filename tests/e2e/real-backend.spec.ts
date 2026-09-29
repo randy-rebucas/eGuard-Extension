@@ -124,9 +124,20 @@ test("pairs with a real eGuard server, then is disconnected when the parent remo
     await expect(popup.getByText("Version 1", { exact: true })).toBeVisible();
     const settings = popup.getByRole("region", { name: "Family settings" });
     await expect(settings.getByText("Safe Search")).toBeVisible();
-    await expect(popup.getByText("Private windows aren't protected")).toBeVisible();
+    await expect(
+      popup.getByRole("list", { name: "Issues" }).getByText("Private windows aren't protected"),
+    ).toBeVisible();
     await expect(popup.getByText("Website protection not active")).toHaveCount(0);
     await expect(popup.getByText("Protection active")).toHaveCount(0);
+
+    // Health: the popup lists the self-checks; the report reached eGuard, which told the parent
+    await popup.getByText("Health checks").click();
+    await expect(popup.getByText("Website rules active")).toBeVisible();
+    await expect(popup.getByText("Family settings verified")).toBeVisible();
+    const alerts = await mobile("GET", "/alerts", { token });
+    expect((alerts.data.alerts as { title: string }[]).map((a) => a.title)).toContain(
+      "Private windows aren't protected",
+    );
 
     // A parent's change arrives as the next signed version
     const put = await mobile("PUT", `/children/${child.data.id as string}/browser-policy`, {

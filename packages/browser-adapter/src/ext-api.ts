@@ -20,6 +20,32 @@ export function extensionOrigin(api: ExtensionApi): string {
   return api.runtime.getURL("");
 }
 
+type ChromeSetting = {
+  get(details: object): Promise<{ value: unknown; levelOfControl: string }>;
+  set(details: { value: unknown }): Promise<void>;
+  clear(details: object): Promise<void>;
+};
+
+/**
+ * privacy.services.safeBrowsingEnabled: only Chromium has it, and only with the `privacy` permission (the
+ * Chrome build). Undefined elsewhere; the types claim it always exists.
+ */
+export function safeBrowsingSetting(api: ExtensionApi): ChromeSetting | undefined {
+  const privacy = (api as { privacy?: { services?: { safeBrowsingEnabled?: ChromeSetting } } }).privacy;
+  return privacy?.services?.safeBrowsingEnabled;
+}
+
+/**
+ * management.getSelf().installType: "admin" when a browser policy force-installed eGuard (it can't be removed
+ * then). getSelf needs no permission in Chrome, Edge or Firefox. null where the browser can't say.
+ */
+export async function installType(api: ExtensionApi): Promise<string | null> {
+  const management = (api as { management?: { getSelf?: () => Promise<{ installType?: string }> } })
+    .management;
+  if (!management?.getSelf) return null;
+  return (await management.getSelf()).installType ?? null;
+}
+
 /** storage.session (memory-only) exists from Chrome 102 and Firefox 115; the types claim it always does. */
 export function sessionArea(api: ExtensionApi): chrome.storage.StorageArea | undefined {
   return (api.storage as { session?: chrome.storage.StorageArea }).session;

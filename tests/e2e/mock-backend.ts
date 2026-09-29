@@ -186,6 +186,15 @@ export async function startMockBackend(port: number) {
           send(res, 200, { requests: [...state.accessRequests].reverse().map(requestJson) });
           return;
         }
+        case "POST /api/browser/v1/health":
+        case "POST /api/browser/v1/events": {
+          if (state.revoked || !state.accessTokens.has(bearer)) {
+            send(res, 401, { error: "Invalid or expired token" });
+            return;
+          }
+          send(res, 200, { ok: true, score: 0, total: 0 });
+          return;
+        }
         default: {
           send(res, 404, { error: "Not found" });
           return;

@@ -1,8 +1,12 @@
 import {
   AccessRequestEnvelope,
   AccessRequestList,
+  EventsResponse,
+  HealthReportResponse,
   PairResponse,
   PolicyEnvelope,
+  type EventsReport,
+  type HealthReport,
   type PairRequest,
 } from "@eguard/schemas";
 import type { HttpClient } from "./http.ts";
@@ -30,4 +34,14 @@ export function createAccessRequest(
 /** This browser's recent requests and their answers. */
 export function listAccessRequests(tokens: TokenManager) {
   return tokens.authorized(PATHS.accessRequests, AccessRequestList);
+}
+
+/** The extension's self-checks, so eGuard can tell parents when protection changes. */
+export function reportHealth(tokens: TokenManager, body: HealthReport) {
+  return tokens.authorized(PATHS.healthReport, HealthReportResponse, { body });
+}
+
+/** One day's blocked counts per category. */
+export function reportEvents(tokens: TokenManager, body: EventsReport) {
+  return tokens.authorized(PATHS.events, EventsResponse, { body });
 }

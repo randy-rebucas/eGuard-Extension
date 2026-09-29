@@ -14,7 +14,7 @@ It is a client of the eGuard platform in `~/eguard` and pairs with it using one-
 - Popup, onboarding and read-only options/privacy pages in the eGuard design language, light and dark
 - 77 unit tests, 8 Playwright scenarios including WCAG 2.2 AA scans
 
-The popup says **Protected** only when the signed policy is verified, its rules are read back from the browser intact, and eGuard is allowed in private windows; otherwise it says what needs attention. Category lists are a starter set for now (see [API.md](docs/API.md)). Health reporting to parents is Phase 5. See the [plan](docs/ARCHITECTURE.md#f-implementation-plan).
+The popup says **Protected** only when the signed policy is verified, its rules are read back from the browser intact, and eGuard is allowed in private windows; otherwise it says what needs attention. Category lists are a starter set for now (see [API.md](docs/API.md)). The popup and options page list six health checks with guidance; the results go to eGuard, which alerts parents when protection drifts, private windows aren't covered, Safe Browsing is off, or the browser goes quiet. See the [plan](docs/ARCHITECTURE.md#f-implementation-plan).
 
 ## Quick start
 

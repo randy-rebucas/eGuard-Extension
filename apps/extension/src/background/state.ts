@@ -28,7 +28,23 @@ export const SyncRecord = z.object({
 });
 export type SyncRecord = z.infer<typeof SyncRecord>;
 
-export const HealthRecord = z.object({ lastCheckAt: z.iso.datetime() });
+export const HealthRecord = z.object({
+  lastCheckAt: z.iso.datetime(),
+  /** The last report eGuard accepted, and what it said (health.ts reportKey) */
+  lastReportAt: z.iso.datetime().optional(),
+  lastReportKey: z.string().max(2000).optional(),
+});
+export type HealthRecord = z.infer<typeof HealthRecord>;
+
+/**
+ * Blocked pages per day and category, until eGuard has them. Counts only: no site, no time finer than a day.
+ * `{ "2026-09-28": { "GAMING": 3, "BLOCKED_SITE": 1 } }`
+ */
+export const BlockCounts = z.record(
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  z.record(z.string().max(32), z.number().int().nonnegative()),
+);
+export type BlockCounts = z.infer<typeof BlockCounts>;
 
 const Credential = z.object({ installationId: z.string().min(1), refreshToken: z.string().min(20) });
 const Access = z.object({ token: z.string().min(20), expiresAt: z.iso.datetime() });
@@ -48,6 +64,7 @@ export function createState(
     policy: typedItem(local, "policy", StoredPolicy, onInvalid),
     sync: typedItem(local, "sync", SyncRecord, onInvalid),
     health: typedItem(local, "health", HealthRecord, onInvalid),
+    blockCounts: typedItem(local, "blockCounts", BlockCounts, onInvalid),
     access: typedItem(session, "access", Access, onInvalid),
   };
 
@@ -70,6 +87,7 @@ export function createState(
       items.policy.remove(),
       items.sync.remove(),
       items.health.remove(),
+      items.blockCounts.remove(),
     ]);
   }
 

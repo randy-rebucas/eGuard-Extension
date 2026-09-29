@@ -9,6 +9,7 @@ export const DOES = [
   "Turns on SafeSearch where this browser allows it",
   "Checks that its protection is still set up correctly",
   "Tells parents when protection needs attention",
+  "Counts how many pages it blocked each day, by category, never which ones",
 ];
 
 export const DOES_NOT = [

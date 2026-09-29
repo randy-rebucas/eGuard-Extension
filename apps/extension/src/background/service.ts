@@ -3,6 +3,8 @@ import {
   fetchPolicy,
   listAccessRequests,
   pair,
+  reportEvents,
+  reportHealth as postHealth,
   type HttpClient,
   type TokenManager,
 } from "@eguard/api-client";
@@ -16,8 +18,14 @@ import type {
   ProtectionStatus,
 } from "@eguard/schemas";
 import type { Enforcement } from "./enforcement.ts";
+import { buildChecks, dayIn, reportKey, type SafeBrowsingApi } from "./health.ts";
 import type { State } from "./state.ts";
 import { deriveStatus } from "./status.ts";
+
+/** A health report goes to eGuard when something changed, and at least this often while nothing does. */
+export const REPORT_EVERY_MS = 60 * 60_000;
+/** Daily counts eGuard couldn't take yet are kept this long, then dropped (the server refuses older days). */
+export const KEEP_COUNTS_DAYS = 14;
 
 /** Counts and switches only: the popup shows what kind of protection is set, never which sites. */
 export function summarize(p: BrowserProtectionPolicy, now: Date): PolicySummary {
@@ -64,6 +72,10 @@ export type ServiceDeps = {
   privateWindowsAllowed: () => Promise<boolean | null>;
   /** Sends a tab to the eGuard block page for `url`. */
   openBlockPage: (tabId: number, url: string) => Promise<void>;
+  /** The browser's own Safe Browsing switch, where eGuard can hold it on (Chrome); null elsewhere. */
+  safeBrowsing: SafeBrowsingApi | null;
+  /** management.getSelf().installType ("admin" when force-installed by policy), or null where unavailable. */
+  installType: () => Promise<string | null>;
   now?: () => number;
   log?: (event: string, detail?: Record<string, unknown>) => void;
   /** Called after anything that can change the status (badge updates). */
@@ -89,26 +101,43 @@ export function createService(d: ServiceDeps) {
   }
 
   async function getStatus(): Promise<ProtectionStatus> {
-    const [installation, policy, sync, health, privateWindowsAllowed] = await Promise.all([
-      d.state.installation.get(),
-      loadPolicy(),
-      d.state.sync.get(),
-      d.state.health.get(),
-      d.privateWindowsAllowed().catch(() => null),
-    ]);
+    const [installation, policy, sync, health, privateWindowsAllowed, safeBrowsing, installType] =
+      await Promise.all([
+        d.state.installation.get(),
+        loadPolicy(),
+        d.state.sync.get(),
+        d.state.health.get(),
+        d.privateWindowsAllowed().catch(() => null),
+        d.safeBrowsing ? d.safeBrowsing.get().catch(() => null) : null,
+        d.installType().catch(() => null),
+      ]);
+    // Read back from the browser every time: what's installed must be exactly what the verified policy requires
+    const rulesVerified = installation
+      ? await d.enforcement.verify(policy?.policy ?? null, new Date(now()))
+      : false;
+    const policyVersion = policy?.policy.version ?? null;
+    const checks = buildChecks({
+      browser: d.browser,
+      policyVersion,
+      wantsSafeBrowsing: policy?.policy.safeBrowsing ?? null,
+      rulesVerified,
+      privateWindowsAllowed,
+      sync,
+      safeBrowsing,
+      installType,
+      now: now(),
+    });
     const status = deriveStatus({
       browser: d.browser,
       supported: isSupportedBrowser(d.browser),
       installation,
-      policyVersion: policy?.policy.version ?? null,
+      policyVersion,
       policySummary: policy ? summarize(policy.policy, new Date(now())) : null,
-      // Read back from the browser every time: what's installed must be exactly what the verified policy requires
-      rulesVerified: installation
-        ? await d.enforcement.verify(policy?.policy ?? null, new Date(now()))
-        : false,
+      rulesVerified,
       privateWindowsAllowed,
       sync,
       lastHealthCheckAt: health?.lastCheckAt ?? null,
+      checks,
       now: now(),
     });
     await d.onStatus?.(status);
@@ -168,7 +197,30 @@ export function createService(d: ServiceDeps) {
   async function enforce(): Promise<boolean> {
     const installation = await d.state.installation.get();
     const policy = installation ? await loadPolicy() : null;
-    return d.enforcement.apply(policy?.policy ?? null, new Date(now()));
+    const ok = await d.enforcement.apply(policy?.policy ?? null, new Date(now()));
+    await keepSafeBrowsing(policy?.policy.safeBrowsing ?? false);
+    return ok;
+  }
+
+  /**
+   * Holds the browser's Safe Browsing on while the family asks for it (settings then show it as managed by
+   * eGuard), and hands it back otherwise. If something else controls it, the health check says so.
+   */
+  async function keepSafeBrowsing(wanted: boolean): Promise<void> {
+    if (!d.safeBrowsing) return;
+    try {
+      const cur = await d.safeBrowsing.get();
+      const ours = cur.level === "controlled_by_this_extension";
+      if (wanted && (cur.level === "controllable_by_this_extension" || (ours && !cur.value))) {
+        await d.safeBrowsing.set(true);
+        log("safe_browsing_held");
+      } else if (!wanted && ours) {
+        await d.safeBrowsing.clear();
+        log("safe_browsing_released");
+      }
+    } catch (err) {
+      log("safe_browsing_failed", { error: String(err) });
+    }
   }
 
   /** The browser reported a failed top-level load: if eGuard blocked it, show the block page instead. */
@@ -180,7 +232,49 @@ export function createService(d: ServiceDeps) {
       now: new Date(now()),
       categoryOf: categoryIndex(policy.policy),
     });
-    if (ev.decision !== "ALLOW") await d.openBlockPage(tabId, url);
+    if (ev.decision === "ALLOW") return;
+    await d.openBlockPage(tabId, url);
+    await countBlocked(
+      ev.reason.type === "CATEGORY" ? ev.reason.category : ev.reason.type,
+      policy.policy.schedule?.timezone,
+    );
+  }
+
+  /** One more blocked page today, under its category or reason. Never the site. */
+  async function countBlocked(key: string, timeZone: string | undefined): Promise<void> {
+    const day = dayIn(timeZone, new Date(now()));
+    const counts = (await d.state.blockCounts.get()) ?? {};
+    const today = counts[day] ?? {};
+    today[key] = (today[key] ?? 0) + 1;
+    counts[day] = today;
+    await d.state.blockCounts.set(counts);
+  }
+
+  /**
+   * Sends finished days' counts (today's keeps growing until tomorrow). A day eGuard took or refused is
+   * forgotten; one that couldn't be sent waits for the next try, for up to KEEP_COUNTS_DAYS.
+   */
+  async function sendDailyCounts(): Promise<void> {
+    if (!(await d.state.installation.get())) return;
+    const counts = await d.state.blockCounts.get();
+    if (!counts) return;
+    const tz = (await loadPolicy())?.policy.schedule?.timezone;
+    const today = dayIn(tz, new Date(now()));
+    const oldest = dayIn(tz, new Date(now() - KEEP_COUNTS_DAYS * 864e5));
+    const done = new Set(Object.keys(counts).filter((day) => day < oldest));
+    for (const day of Object.keys(counts).sort()) {
+      if (day >= today || done.has(day)) continue;
+      const res = await reportEvents(d.tokens, { date: day, blocked: counts[day] ?? {} });
+      if (!res.ok && res.kind !== "rejected") {
+        log("counts_not_sent", { kind: res.kind });
+        break;
+      }
+      done.add(day);
+    }
+    if (!(await d.state.installation.get())) return; // disconnected meanwhile
+    await d.state.blockCounts.set(
+      Object.fromEntries(Object.entries(counts).filter(([day]) => !done.has(day))),
+    );
   }
 
   /** Everything the block page shows, worked out here from the verified policy (the page is never trusted). */
@@ -276,16 +370,60 @@ export function createService(d: ServiceDeps) {
     log("paired", { installationId: g.installationId });
     // First policy download. Pairing succeeded even if this fails; sync retries on its alarm.
     await syncPolicy().catch((err: unknown) => log("first_sync_failed", { error: String(err) }));
+    // The parent sees this browser's health right away, not at the next alarm
+    await reportHealth(true).catch((err: unknown) => log("first_report_failed", { error: String(err) }));
   }
 
   /**
-   * Phase 1 health check: refresh what we can observe (policy sync) and stamp the time.
-   * Phase 5 adds rule read-back, permission and private-window checks, and reports to the backend.
+   * Runs the self-checks and tells eGuard when the result changed, when `force`d (a parent pressed Run health
+   * check), or at least every REPORT_EVERY_MS. If eGuard can't be reached, the next check tries again.
    */
+  async function reportHealth(force = false): Promise<void> {
+    if (!(await d.state.installation.get())) return;
+    const status = await getStatus();
+    const prev = await d.state.health.get();
+    const at = iso();
+    const body = {
+      state: status.state,
+      policyVersion: status.policyVersion,
+      checks: status.checks.map((c) => ({ id: c.id, status: c.status })),
+    };
+    const key = reportKey(body);
+    const due =
+      force ||
+      !prev?.lastReportAt ||
+      key !== prev.lastReportKey ||
+      now() - Date.parse(prev.lastReportAt) >= REPORT_EVERY_MS;
+    let sent = false;
+    if (due) {
+      const res = await postHealth(d.tokens, body);
+      sent = res.ok;
+      if (!res.ok) log("health_not_sent", { kind: res.kind });
+    }
+    if (!(await d.state.installation.get())) return; // the report found this browser removed
+    await d.state.health.set(
+      sent ? { lastCheckAt: at, lastReportAt: at, lastReportKey: key } : { ...prev, lastCheckAt: at },
+    );
+  }
+
+  /** "Run health check": fetch the latest policy, re-apply everything, check it and report it now. */
   async function runHealthCheck(): Promise<void> {
-    if (await d.state.installation.get()) await syncPolicy();
+    if (!(await d.state.installation.get())) {
+      await enforce(); // clears anything left over from an earlier connection
+      await d.state.health.set({ lastCheckAt: iso() });
+      return;
+    }
+    await syncPolicy();
     await enforce();
-    await d.state.health.set({ lastCheckAt: iso() });
+    await reportHealth(true);
+  }
+
+  /** Every sync alarm: the latest policy, then the checks (reported if they changed) and finished days' counts. */
+  async function periodic(): Promise<void> {
+    if (!(await d.state.installation.get())) return;
+    await syncPolicy();
+    await reportHealth();
+    await sendDailyCounts();
   }
 
   return {
@@ -299,6 +437,9 @@ export function createService(d: ServiceDeps) {
     checkAccess,
     pairWithCode,
     runHealthCheck,
+    reportHealth,
+    sendDailyCounts,
+    periodic,
     openDashboard: () => d.openTab(`${d.webAppUrl}/dashboard`),
     openOnboarding: () => d.openTab(d.onboardingUrl),
   };

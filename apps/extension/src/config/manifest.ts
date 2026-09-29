@@ -10,6 +10,12 @@ export const GECKO_ID = "browser-extension@eguard.family";
  */
 export const PERMISSIONS = ["storage", "alarms", "declarativeNetRequest", "webNavigation"] as const;
 
+/**
+ * Chrome only: keeps Chrome's Safe Browsing on (privacy.services.safeBrowsingEnabled). Edge ignores that setting
+ * (SmartScreen is separate) and Firefox has no such API, so their builds don't ask for it.
+ */
+export const CHROME_ONLY_PERMISSIONS = ["privacy"] as const;
+
 /** SafeSearch redirects need host access to the search engines, and only those. */
 export const SEARCH_HOST_PERMISSIONS = [
   ...new Set(SAFE_SEARCH_ENGINES.map((e) => `*://*.${e.host.replace(/^www\./, "")}/*`)),
@@ -38,7 +44,7 @@ export function buildManifest({ target, version, env }: ManifestInput): Record<s
     icons,
     action: { default_title: "eGuard", default_popup: "popup/index.html", default_icon: icons },
     options_ui: { page: "options/index.html", open_in_tab: true },
-    permissions: [...PERMISSIONS],
+    permissions: [...PERMISSIONS, ...(target === "chrome" ? CHROME_ONLY_PERMISSIONS : [])],
     host_permissions: hostPermissions,
     content_security_policy: {
       extension_pages: `script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src ${connectSrc}`,

@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowRight, ChevronDown, RefreshCw } from "lucide-react";
 import type { Issue, PolicySummary, ProtectionStatus } from "@eguard/schemas";
 import { getExtensionApi } from "@eguard/browser-adapter";
 import { useStatus } from "../shared/status-store.ts";
 import { browserLabel, relativeTime } from "../shared/format.ts";
+import { HealthList, scoreLabel } from "../shared/HealthList.tsx";
 import { Button, CHECK_VISUAL, LogoMark, TONE_CLASS, stateVisual } from "../ui/components.tsx";
 
 export function Popup() {
@@ -140,6 +141,24 @@ function Body({ status }: { status: ProtectionStatus }) {
         <p className="flex items-center gap-2 text-[13px] text-ok-ink">
           <CheckIcon /> No issues detected
         </p>
+      ) : null}
+
+      {status.checks.length ? (
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center justify-between rounded-md py-1 text-[13px] font-semibold text-ink-2 hover:text-ink">
+            Health checks
+            <span className="flex items-center gap-1 font-normal text-ink-3">
+              {scoreLabel(status.checks)}
+              <ChevronDown
+                className="size-3.5 transition-transform group-open:rotate-180"
+                aria-hidden="true"
+              />
+            </span>
+          </summary>
+          <div className="mt-2">
+            <HealthList checks={status.checks} compact />
+          </div>
+        </details>
       ) : null}
     </div>
   );

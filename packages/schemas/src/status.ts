@@ -40,6 +40,28 @@ export const Issue = z.object({
 });
 export type Issue = z.infer<typeof Issue>;
 
+/**
+ * The extension's self-checks (spec §13), reported to eGuard by id and status. Each also carries
+ * parent-facing guidance for the popup and options page; only `{ id, status }` leaves the browser.
+ */
+export const HealthCheckId = z.enum([
+  "policy_signature",
+  "rules_installed",
+  "private_windows",
+  "sync_fresh",
+  "safe_browsing",
+  "force_installed",
+]);
+export type HealthCheckId = z.infer<typeof HealthCheckId>;
+
+export const HealthCheck = z.object({
+  id: HealthCheckId,
+  status: CheckStatus,
+  title: z.string(),
+  detail: z.string(),
+});
+export type HealthCheck = z.infer<typeof HealthCheck>;
+
 export const Connection = z.discriminatedUnion("paired", [
   z.object({ paired: z.literal(false) }),
   z.object({
@@ -63,5 +85,7 @@ export const ProtectionStatus = z.object({
   lastSyncAt: z.iso.datetime().nullable(),
   lastHealthCheckAt: z.iso.datetime().nullable(),
   issues: z.array(Issue),
+  /** Every self-check, passing or not. Empty until the browser is connected. */
+  checks: z.array(HealthCheck),
 });
 export type ProtectionStatus = z.infer<typeof ProtectionStatus>;

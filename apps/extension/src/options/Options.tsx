@@ -3,6 +3,7 @@ import type { ProtectionStatus } from "@eguard/schemas";
 import { useStatus } from "../shared/status-store.ts";
 import { browserLabel, relativeTime } from "../shared/format.ts";
 import { CapabilityList } from "../shared/CapabilityList.tsx";
+import { HealthList, scoreLabel } from "../shared/HealthList.tsx";
 import { PrivacySummary } from "../shared/PrivacySummary.tsx";
 import { Button, Card, LogoMark, TONE_CLASS, stateVisual } from "../ui/components.tsx";
 
@@ -29,6 +30,19 @@ export function Options() {
         {status ? (
           <>
             <Account status={status} />
+            {status.checks.length ? (
+              <Section title="Health" id="health">
+                <p className="mb-4 text-sm leading-relaxed text-ink-2">
+                  {scoreLabel(status.checks)}.{" "}
+                  {status.lastHealthCheckAt
+                    ? `Last checked ${relativeTime(status.lastHealthCheckAt)}.`
+                    : "Not checked yet."}{" "}
+                  eGuard checks every few minutes and tells the parents in the dashboard when something
+                  changes.
+                </p>
+                <HealthList checks={status.checks} />
+              </Section>
+            ) : null}
             <Section title="Protection" id="protection">
               <p className="mb-4 text-sm leading-relaxed text-ink-2">
                 What eGuard can do in {status.browser.name}. Parents choose which protections are on in the
@@ -107,15 +121,19 @@ function Privacy() {
       <p className="text-sm leading-relaxed text-ink-2">
         eGuard downloads your family's list of blocked and allowed sites, and the browser checks each site
         against it on this computer. The sites your child visits are not sent to eGuard, and eGuard keeps no
-        record of which sites were blocked. A site's address only reaches a parent if your child asks for
-        access to it.
+        record of which sites were blocked, only how many were blocked each day in each category. A site's
+        address only reaches a parent if your child asks for access to it.
       </p>
       <h3 className="mt-5 mb-1.5 text-[13px] font-semibold text-ink-2">What eGuard sends to its servers</h3>
       <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-ink-2">
         <li>
           Browser name and version, eGuard version and operating system type, when the browser is connected.
         </li>
-        <li>Protection status and health-check results.</li>
+        <li>Protection status and health-check results: which checks pass, never what was browsed.</li>
+        <li>
+          Once a day, how many pages were blocked in each category the day before ("3 gaming"). Never which
+          sites, and nothing finer than a day.
+        </li>
         <li>Access requests your child chooses to send: the site's address and the reason they typed.</li>
       </ul>
       <h3 className="mt-5 mb-1.5 text-[13px] font-semibold text-ink-2">How data is protected</h3>
