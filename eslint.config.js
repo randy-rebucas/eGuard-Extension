@@ -9,6 +9,8 @@ export default tseslint.config(
       "**/dist/**",
       "dist-e2e/**",
       "dist-real/**",
+      "dist-manual/**",
+      "release/**",
       "**/node_modules/**",
       "**/.tsbuild/**",
       "test-results/**",

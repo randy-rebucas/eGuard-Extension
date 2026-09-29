@@ -84,7 +84,15 @@ describe("buildManifest", () => {
     });
     const fx = buildManifest({ target: "firefox", version: "1.0.0", env });
     expect(fx.background).toEqual({ scripts: ["background.js"] });
-    expect(fx.browser_specific_settings).toMatchObject({ gecko: { id: "browser-extension@eguard.family" } });
+    expect(fx.browser_specific_settings).toEqual({
+      gecko: {
+        id: "browser-extension@eguard.family",
+        // AMO rejects new add-ons without a data-collection declaration; Firefox 140 is the first to read it
+        strict_min_version: "140.0",
+        data_collection_permissions: { required: ["browsingActivity"] },
+      },
+      gecko_android: { strict_min_version: "142.0" },
+    });
     expect(fx).not.toHaveProperty("minimum_chrome_version");
   });
 

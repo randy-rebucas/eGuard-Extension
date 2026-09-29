@@ -1,8 +1,18 @@
+import { MIN_VERSION } from "@eguard/browser-adapter";
 import { SAFE_SEARCH_ENGINES } from "@eguard/policy-engine";
 import type { BuildTarget } from "@eguard/schemas";
 import type { Env } from "./env.ts";
 
 export const GECKO_ID = "browser-extension@eguard.family";
+
+/**
+ * What Firefox shows at install and AMO requires (docs/PUBLISHING.md §6.3, docs/PRIVACY.md).
+ * browsingActivity: an access request sends the address of the site the child asks for, and the daily
+ * counts are blocked pages per category. Browser/OS details and health-check results are how the
+ * service works (the parent's status and alerts), not usage telemetry, so they aren't declared as the
+ * optional-only technicalAndInteraction, which the person could decline.
+ */
+export const FIREFOX_DATA_COLLECTION = { required: ["browsingActivity"] };
 
 /**
  * Permissions, each with a documented reason in docs/SECURITY.md#permissions. We deliberately never request
@@ -53,7 +63,15 @@ export function buildManifest({ target, version, env }: ManifestInput): Record<s
 
   if (target === "firefox") {
     manifest.background = { scripts: ["background.js"] };
-    manifest.browser_specific_settings = { gecko: { id: GECKO_ID, strict_min_version: "128.0" } };
+    manifest.browser_specific_settings = {
+      gecko: {
+        id: GECKO_ID,
+        strict_min_version: `${MIN_VERSION.firefox}.0`,
+        data_collection_permissions: FIREFOX_DATA_COLLECTION,
+      },
+      // Firefox for Android reads data_collection_permissions from 142
+      gecko_android: { strict_min_version: "142.0" },
+    };
   } else {
     manifest.background = { service_worker: "background.js" };
     manifest.minimum_chrome_version = "120";

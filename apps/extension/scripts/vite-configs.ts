@@ -3,6 +3,7 @@ import path from "node:path";
 import type { InlineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwind from "@tailwindcss/vite";
+import { amoSafe } from "./amo-safe.ts";
 
 export const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const repoRoot = path.resolve(appDir, "../..");
@@ -22,7 +23,7 @@ export function pagesConfig(outDir: string, c: Common): InlineConfig {
     envDir: false,
     define: c.define,
     publicDir: path.join(appDir, "public"),
-    plugins: [react(), tailwind()],
+    plugins: [amoSafe({ verify: c.mode === "production" }), react(), tailwind()],
     logLevel: "warn",
     build: {
       outDir,
@@ -48,6 +49,7 @@ export function backgroundConfig(outDir: string, c: Common): InlineConfig {
     envDir: false,
     define: c.define,
     publicDir: false,
+    plugins: [amoSafe({ verify: c.mode === "production" })],
     logLevel: "warn",
     build: {
       outDir,

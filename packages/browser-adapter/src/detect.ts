@@ -72,7 +72,8 @@ export const MIN_VERSION: Partial<Record<BrowserFamily, number>> = {
   brave: 120,
   opera: 106,
   chromium: 120,
-  firefox: 128,
+  // 140: the first release that understands data_collection_permissions, which AMO requires (and an ESR)
+  firefox: 140,
 };
 
 /**

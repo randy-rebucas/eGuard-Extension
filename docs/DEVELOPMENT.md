@@ -39,7 +39,7 @@ Values are validated at build time (`apps/extension/src/config/env.ts`); a bad v
 
 **Chrome / Edge / Brave:** open `chrome://extensions` (or `edge://extensions`), turn on Developer mode, _Load unpacked_, choose `dist/chrome` (or `dist/edge`). After changes to the background worker, click the reload icon on the extension card; pages reload on reopen.
 
-**Firefox:** open `about:debugging#/runtime/this-firefox`, _Load Temporary Add-on_, choose `dist/firefox/manifest.json`. Temporary add-ons are removed when Firefox closes. Firefox 128+ is required.
+**Firefox:** open `about:debugging#/runtime/this-firefox`, _Load Temporary Add-on_, choose `dist/firefox/manifest.json`. Temporary add-ons are removed when Firefox closes. Firefox 140+ is required (the first release that reads the data-collection declaration AMO requires).
 
 Running against the real backend needs the Phase 2 endpoints in `~/eguard`. Without it, `npm run try` builds `dist-manual/chrome` against the E2E mock with a throwaway policy-signing key and keeps the mock running on `http://127.0.0.1:3299` (pairing code `824917`).
 

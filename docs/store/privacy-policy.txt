@@ -1,0 +1,48 @@
+eGuard Browser Protection – Privacy Policy
+Effective: 29 September 2026
+
+eGuard Browser Protection ("the extension") is the browser part of eGuard, a family digital-safety service by DevCom Digital Marketing Services ("DevCom", "we"), Brgy. Hipusngo, Baybay City, Leyte 6521, Philippines. We are the personal information controller for the data described here under the Philippines' Data Privacy Act of 2012 (Republic Act No. 10173). This policy covers the extension. The eGuard website, parent dashboard and apps are covered by https://www.eguard.family/privacy.
+
+THE SHORT VERSION
+- The extension applies the web-protection settings a parent chooses in the eGuard dashboard, and checks that they are still in place.
+- It does not keep a history of the websites your child visits, and it cannot read web pages.
+- Websites are checked against your family's settings by the browser itself, on the device.
+- We don't sell data, show ads, or use analytics or tracking.
+
+WHAT THE EXTENSION NEVER COLLECTS
+- A history of the websites visited, or the addresses of pages that load or are blocked
+- The content of web pages, messages or emails
+- Keystrokes, form entries or passwords
+- Search queries (SafeSearch works by adding the search engine's own safe-search setting to the search address on the device; the query is never read or sent)
+- Cookies, screenshots, camera, microphone or location
+
+WHAT IS SENT TO EGUARD, AND WHY
+1. When the browser is connected: the browser's name and version, the extension's version and the type of operating system (for example Windows). This shows the parent which browser is protected and which protections it supports. Connecting uses a one-time pairing code from the parent dashboard; the parent's password is never entered in the child's browser.
+2. Protection status and health-check results: whether the family's settings are applied, the settings version, and whether each check passes (for example "private windows are covered"). Sent when something changes, at least once an hour, and when someone chooses "Run health check". This lets eGuard tell parents when protection needs attention.
+3. Daily blocked-page counts: once a day, how many pages were blocked the day before in each category or for each reason (for example "3 gaming"). Never which websites, and nothing more detailed than a day.
+4. Access requests, only when the child chooses to send one from eGuard's block page: the website's domain (for example "example.com") and the reason the child types, if any. The parent sees it in the dashboard and decides.
+
+Each request to eGuard's server carries a credential that identifies the browser installation, not the person. Like any web server, ours receives the browser's IP address with each request; it is used only briefly to limit repeated requests.
+
+WHAT IS STORED IN THE BROWSER
+The installation's credentials, the family's current settings (signed by eGuard so they can't be altered), the times of the last sync and health check, and blocked-page counts not yet sent. The short-lived access key is kept in memory only. No browsing data is stored. All of it is deleted when the browser is disconnected or the extension is removed.
+
+WHO CAN SEE IT
+The parents in the child's eGuard family. We share data outside the family only with service providers who run eGuard for us (hosting, database and email), under contract and only to provide their service, and with authorities when the law requires it. We don't sell personal data.
+
+HOW LONG WE KEEP IT
+- Health-check results and daily blocked-page counts: the family's retention period (90 days unless a parent changes it in Settings › Privacy), then deleted automatically.
+- Access requests: until the parent deletes the child or the family account.
+- Browser and extension details: until the parent removes the browser in the dashboard, which also disconnects it and stops all sending.
+
+CHILDREN
+eGuard is set up by parents and guardians. Children don't create accounts. A parent connects the extension to their family account and, by doing so, consents on the child's behalf to the collection described here. The extension is not hidden: it appears in the browser's toolbar, and its settings page explains what it does. Settings can only be changed by a parent in the dashboard.
+
+SECURITY
+Everything is sent over HTTPS to eGuard's server only. The family's settings are cryptographically signed and checked before they are applied. Access keys are short-lived, rotated, and can be revoked by a parent at any time.
+
+YOUR RIGHTS AND CONTACT
+You have the right to be informed, to access, correct, object to, erase or block your data, to data portability, and to claim damages. Parents can export or delete their family's data in the eGuard dashboard (Settings › Data). For anything else, contact our Data Protection Officer at support@devcomdigital.com or by post at the address above. You can also file a complaint with the National Privacy Commission (https://privacy.gov.ph).
+
+CHANGES
+If we change what the extension collects, we will update this policy and its date before the new version is released, and tell family admins by email of significant changes.

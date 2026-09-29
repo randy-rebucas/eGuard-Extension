@@ -13,7 +13,7 @@ These block a first submission. Tick them off in order.
 | 1   | Production server live at `https://www.eguard.family` with the `/api/browser/v1` endpoints ([API.md](API.md))                                                                                                                                            | Backend         |
 | 2   | Production policy-signing key pair made (`node scripts/browser-policy-keys.mjs` in `~/eguard`). Private half in the server's `BROWSER_POLICY_SIGNING_KEY`, public half kept for `VITE_POLICY_PUBLIC_KEY`. **Never use the E2E or `npm run try` keys.**   | Backend         |
 | 3   | Privacy policy published at `https://www.eguard.family/privacy`, covering the extension (source: [PRIVACY.md](PRIVACY.md))                                                                                                                               | Product / legal |
-| 4   | Firefox data-collection declaration added to the manifest (see [§6.3](#63-firefox-data-collection-manifest)). AMO requires it for new extensions                                                                                                         | Engineering     |
+| 4   | Done: Firefox data-collection declaration in the manifest (see [§6.3](#63-firefox-data-collection-manifest)). AMO requires it for new extensions                                                                                                         | Engineering     |
 | 5   | A **reviewer account**: a parent login on production with one child, and a way to hand reviewers a working pairing code (see [§7](#7-reviewer-notes)). Without it, reviewers can't get past onboarding and will reject the extension as "not functional" | Product         |
 | 6   | Store images ready ([§4](#4-store-images))                                                                                                                                                                                                               | Design          |
 | 7   | Version set in `apps/extension/package.json` (numbers only, e.g. `1.0.0`). Every upload needs a higher version than the last one in that store                                                                                                           | Engineering     |
@@ -49,7 +49,8 @@ Zip the **contents** of each folder, so `manifest.json` sits at the root of the 
 $v = (Get-Content apps/extension/package.json | ConvertFrom-Json).version
 New-Item -ItemType Directory -Force release | Out-Null
 foreach ($t in "chrome", "edge", "firefox") {
-  tar -a -c -f "release/eguard-$t-$v.zip" -C "dist/$t" .
+  # List the items rather than ".", so paths are "manifest.json", not "./manifest.json"
+  tar -a -c -f "release/eguard-$t-$v.zip" -C "dist/$t" @(Get-ChildItem "dist/$t" -Name)
 }
 git archive --format=zip -o "release/eguard-source-$v.zip" HEAD   # for AMO's source review
 ```
@@ -111,6 +112,8 @@ Privacy policy: https://www.eguard.family/privacy
 **Support URL:** `https://www.eguard.family/support` (or the support email)
 **Homepage URL:** `https://www.eguard.family`
 **Privacy policy URL:** `https://www.eguard.family/privacy`
+
+**Privacy policy text:** [store/privacy-policy.txt](store/privacy-policy.txt) is the extension's own policy. Paste it into AMO's "This add-on has a Privacy Policy" field, and publish the same text on the website. Update it, and its date, whenever the extension's data collection changes.
 **Language:** English
 
 ## 4. Store images
@@ -130,7 +133,7 @@ Suggested screenshots, in order:
 4. The settings page, Website categories
 5. The parent dashboard's Browser tab, where settings are changed
 
-`SCREENS_DIR=<folder> npx playwright test screens` captures the extension's screens against the mock server. Place them on a 1280×800 canvas in the eGuard style. The mock data (child "Mia", "Cruz family") is fictional; use the same or other made-up names, never a real child's.
+`STORE_SCREENS_DIR=<folder> npx playwright test store-screens` generates screenshots 1–4, a privacy screenshot and both promo tiles as JPEGs (no alpha channel): real extension screens captured against the mock server and set on eGuard-style canvases. Screenshot 5 (the parent dashboard) has to be captured from the web app. Regenerate the images whenever the extension's screens change. The mock data (child "Mia", "Cruz family") is fictional; use the same or other made-up names, never a real child's.
 
 Chrome rejects screenshots with borders, heavy text or anything that looks like a browser warning. Keep one message per image.
 
@@ -231,24 +234,22 @@ Partner Center asks for the privacy policy URL and whether the extension collect
 
 ### 6.3 Firefox data-collection manifest
 
-AMO requires new extensions to declare their data collection in `browser_specific_settings.gecko.data_collection_permissions`. Firefox then shows it at install. Add it in `apps/extension/src/config/manifest.ts` (Firefox branch), and update the manifest test in `apps/extension/src/config/config.test.ts`.
+AMO rejects new extensions without `browser_specific_settings.gecko.data_collection_permissions` ("The \"data_collection_permissions\" property is missing"). It is declared in `apps/extension/src/config/manifest.ts` (`FIREFOX_DATA_COLLECTION`), checked by `apps/extension/src/config/config.test.ts`, and Firefox shows it at install:
 
-Proposed declaration (check category names and which may be `required` against [MDN's data collection guide](https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/) at submission):
-
-```ts
-manifest.browser_specific_settings = {
-  gecko: {
-    id: GECKO_ID,
-    strict_min_version: "128.0",
-    data_collection_permissions: {
-      // Access requests send a site address; daily counts are blocked browsing by category
-      required: ["browsingActivity"],
-    },
-  },
-};
+```json
+"gecko": {
+  "id": "browser-extension@eguard.family",
+  "strict_min_version": "140.0",
+  "data_collection_permissions": { "required": ["browsingActivity"] }
+},
+"gecko_android": { "strict_min_version": "142.0" }
 ```
 
-The health-check results are technical data. Firefox may only allow that category as optional; if so, decide with product whether health reporting can be optional in Firefox, since parents' alerts depend on it. The data-collection field also sets the minimum Firefox version that understands it. Check whether `strict_min_version` must go up.
+- **`browsingActivity`, required:** an access request sends the address of the site the child asks for, and the daily counts are blocked pages per category.
+- **Not declared, `technicalAndInteraction`:** Firefox only allows it as optional, meaning the person could decline it. Browser and OS details and health-check results are how the service works (the parent's status and alerts), not usage telemetry, so they aren't declared under it. If product or legal read it the other way, health reporting has to become optional in Firefox (checked with `browser.permissions.contains({ data_collection: [...] })`).
+- **Minimum versions:** Firefox reads this field from 140 on desktop and 142 on Android, so those are the minimums (`MIN_VERSION.firefox` in `packages/browser-adapter/src/detect.ts` feeds the manifest). 140 is an ESR release.
+
+Check the package with Mozilla's validator before uploading: `npx addons-linter release/eguard-firefox-<version>.zip` must report 0 errors and 0 warnings. The "Function constructor is eval" and "Unsafe assignment to innerHTML" warnings, which AMO lists as possible grounds for rejection, came from Zod and React DOM. `apps/extension/scripts/amo-safe.ts` removes them at build time and fails a production build if either comes back (for example after a library upgrade).
 
 ## 7. Reviewer notes
 
@@ -285,6 +286,12 @@ Build instructions: Node 24 or later. From the source root:
   npm ci
   VITE_ENVIRONMENT=production VITE_API_URL=https://www.eguard.family VITE_WEB_APP_URL=https://www.eguard.family VITE_POLICY_PUBLIC_KEY=<key below> node apps/extension/scripts/build.ts --target firefox
 Output: dist/firefox. VITE_POLICY_PUBLIC_KEY is a public key (safe to share): <production public key>
+```
+
+Also paste this, so the reviewer knows why two libraries differ from their published versions:
+
+```text
+Two bundled libraries are patched at build time (apps/extension/scripts/amo-safe.ts) so the package has no eval or innerHTML: Zod's optional code-generation speed-up uses a Function constructor that always throws (Zod then uses its normal validator, as it already does under the extension's CSP), and React DOM's innerHTML branches (rendering <script> elements, dangerouslySetInnerHTML) throw instead. eGuard uses neither. The build fails if either pattern is left in the output.
 ```
 
 ## 8. Submitting

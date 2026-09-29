@@ -143,28 +143,34 @@ export function Options() {
   );
 }
 
-/** The section whose heading was scrolled to most recently, for the sidebar highlight. */
+/**
+ * The section being read, for the sidebar highlight: the last one whose top has passed 40% of the window,
+ * or the last section once the page is scrolled to the bottom (short final sections never reach that line).
+ */
 function useActiveSection(ready: boolean) {
   const [active, setActive] = useState(NAV[0]!.id);
   useEffect(() => {
     if (!ready) return;
-    const seen = new Set<string>();
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) seen.add(e.target.id);
-          else seen.delete(e.target.id);
-        }
-        const first = NAV.find((n) => seen.has(n.id));
-        if (first) setActive(first.id);
-      },
-      { rootMargin: "0px 0px -60% 0px" },
-    );
-    for (const n of NAV) {
-      const el = document.getElementById(n.id);
-      if (el) io.observe(el);
-    }
-    return () => io.disconnect();
+    const update = () => {
+      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+      if (atBottom) {
+        setActive(NAV[NAV.length - 1]!.id);
+        return;
+      }
+      let current = NAV[0]!.id;
+      for (const n of NAV) {
+        const el = document.getElementById(n.id);
+        if (el && el.getBoundingClientRect().top <= window.innerHeight * 0.4) current = n.id;
+      }
+      setActive(current);
+    };
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
   }, [ready]);
   return active;
 }
