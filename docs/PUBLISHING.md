@@ -67,7 +67,7 @@ Keep the zips and the commit hash together. Stores sometimes ask for the exact p
 
 ## 3. Listing text
 
-Use the same text in all three stores. Adjust only where a form's limits require it.
+Use the same text in all three stores. Adjust only where a form's limits require it. Don't name other browsers or browser makers (e.g. DuckDuckGo) in the summary or description; reviewers reject listings that do.
 
 **Name:** eGuard Browser Protection
 
@@ -86,7 +86,7 @@ eGuard Browser Protection applies your family's web-protection settings in your 
 
 What it does
 • Blocks the kinds of websites you choose, such as adult content, gambling or violence, and specific sites you add
-• Turns on SafeSearch for Google, Bing and DuckDuckGo
+• Turns on SafeSearch on supported search engines
 • Focus hours: only the websites you allow open during the times you set
 • Allowed-only mode for younger children
 • A calm block page that explains why and lets your child ask you for access. You approve or say no from the dashboard
