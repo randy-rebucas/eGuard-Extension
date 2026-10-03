@@ -10,13 +10,16 @@ export const PairingCode = z
   .transform((s) => s.replace(/[\s-]/g, "").toUpperCase())
   .pipe(z.string().regex(/^[A-Z0-9]{6,12}$/, "Enter the code shown in the eGuard parent dashboard"));
 
-const PageUrl = z.url({ protocol: /^https?$/ }).max(4096);
+/** Long enough for real-world addresses (long query strings included); the block page must still explain them. */
+const PageUrl = z.url({ protocol: /^https?$/ }).max(65_536);
 
 export const BlockReason = z.discriminatedUnion("type", [
   z.object({ type: z.literal("BLOCKED_SITE") }),
   z.object({ type: z.literal("CATEGORY"), category: z.string() }),
   z.object({ type: z.literal("FOCUS_HOURS"), until: z.string() }),
   z.object({ type: z.literal("UNKNOWN_SITE") }),
+  /** A search on an engine where eGuard can't turn on SafeSearch */
+  z.object({ type: z.literal("SAFE_SEARCH") }),
 ]);
 
 /** What the block page shows. Built by the worker from the verified policy. */

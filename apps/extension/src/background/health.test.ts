@@ -16,6 +16,7 @@ const healthy = (patch: Partial<HealthInput> = {}): HealthInput => ({
   sync: { lastAttemptAt: "2026-09-29T09:58:00Z", lastSuccessAt: "2026-09-29T09:58:00Z", lastError: null },
   safeBrowsing: { value: true, level: "controlled_by_this_extension" },
   installType: "admin",
+  hostAccess: true,
   now: NOW,
   ...patch,
 });
@@ -23,12 +24,13 @@ const byId = (checks: HealthCheck[]) => Object.fromEntries(checks.map((c) => [c.
 const statuses = (i: HealthInput) => Object.fromEntries(buildChecks(i).map((c) => [c.id, c.status]));
 
 describe("buildChecks", () => {
-  it("lists the six checks in a fixed order, all passing on a fully set-up Chrome", () => {
+  it("lists the seven checks in a fixed order, all passing on a fully set-up Chrome", () => {
     const checks = buildChecks(healthy());
     expect(checks.map((c) => c.id)).toEqual([
       "policy_signature",
       "rules_installed",
       "private_windows",
+      "site_access",
       "sync_fresh",
       "safe_browsing",
       "force_installed",
@@ -60,6 +62,17 @@ describe("buildChecks", () => {
       byId(buildChecks(healthy({ browser: EDGE, privateWindowsAllowed: false }))).private_windows?.detail,
     ).toContain("Allow in InPrivate");
     expect(statuses(healthy({ privateWindowsAllowed: null })).private_windows).toBe("UNSUPPORTED");
+  });
+
+  it("site access: withdrawn in the browser's settings needs a parent, with that browser's steps", () => {
+    const off = byId(buildChecks(healthy({ hostAccess: false }))).site_access;
+    expect(off?.status).toBe("ACTION_REQUIRED");
+    expect(off?.detail).toContain("SafeSearch is off");
+    expect(off?.detail).toContain("chrome://extensions");
+    expect(byId(buildChecks(healthy({ browser: FIREFOX, hostAccess: false }))).site_access?.detail).toContain(
+      "Permissions",
+    );
+    expect(statuses(healthy({ hostAccess: null })).site_access).toBe("UNSUPPORTED");
   });
 
   it("sync is stale after a day without success, or while eGuard can't be reached", () => {

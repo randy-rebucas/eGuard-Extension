@@ -1,14 +1,14 @@
-import type { BrowserProtectionPolicy, WebCategory } from "@eguard/schemas";
+import type { BrowserProtectionPolicy } from "@eguard/schemas";
 
 /**
  * Host → category lookup over the signed category lists. A listed domain covers its subdomains, so a lookup
  * walks up the host's labels (m.facebook.com → facebook.com), which keeps it O(labels) for any list size.
+ * Category keys are open-ended: one this build has no label for is still blocked if the family blocks it.
  */
-export function categoryIndex(policy: BrowserProtectionPolicy): (host: string) => WebCategory | null {
-  const byDomain = new Map<string, WebCategory>();
-  for (const [category, domains] of Object.entries(policy.categoryDomains) as [WebCategory, string[]][]) {
-    if (!policy.blockedCategories.includes(category)) continue;
-    for (const d of domains) if (!byDomain.has(d)) byDomain.set(d, category);
+export function categoryIndex(policy: BrowserProtectionPolicy): (host: string) => string | null {
+  const byDomain = new Map<string, string>();
+  for (const category of [...policy.blockedCategories].sort()) {
+    for (const d of policy.categoryDomains[category] ?? []) if (!byDomain.has(d)) byDomain.set(d, category);
   }
   return (host) => {
     for (let h = host; h.includes("."); h = h.slice(h.indexOf(".") + 1)) {

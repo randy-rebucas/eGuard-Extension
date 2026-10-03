@@ -46,7 +46,11 @@ export const BlockCounts = z.record(
 );
 export type BlockCounts = z.infer<typeof BlockCounts>;
 
-const Credential = z.object({ installationId: z.string().min(1), refreshToken: z.string().min(20) });
+const Credential = z.object({
+  installationId: z.string().min(1),
+  refreshToken: z.string().min(20),
+  rejectedSince: z.iso.datetime().optional(),
+});
 const Access = z.object({ token: z.string().min(20), expiresAt: z.iso.datetime() });
 
 /**

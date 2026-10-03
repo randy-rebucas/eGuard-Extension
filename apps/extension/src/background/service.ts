@@ -9,7 +9,14 @@ import {
   type TokenManager,
 } from "@eguard/api-client";
 import { isSupportedBrowser } from "@eguard/browser-adapter";
-import { categoryIndex, domainCovers, evaluateUrl, httpHost, isScheduleActive } from "@eguard/policy-engine";
+import {
+  categoryIndex,
+  domainCovers,
+  evaluateUrl,
+  httpHost,
+  isScheduleActive,
+  otherSitesDecision,
+} from "@eguard/policy-engine";
 import type {
   BlockInfo,
   BrowserInfo,
@@ -43,7 +50,7 @@ export function summarize(
     blockedToday,
     blockedSites: p.blockedDomains.length,
     allowedSites: p.allowedDomains.length,
-    otherSites: p.unknownSitesPolicy,
+    otherSites: otherSitesDecision(p),
     focusHours: p.schedule?.enabled
       ? {
           startTime: p.schedule.startTime,
@@ -84,6 +91,11 @@ export type ServiceDeps = {
   safeBrowsing: SafeBrowsingApi | null;
   /** management.getSelf().installType ("admin" when force-installed by policy), or null where unavailable. */
   installType: () => Promise<string | null>;
+  /**
+   * Whether the browser still grants every host permission eGuard asked for (people can withdraw them in the
+   * browser's extension settings), or null where it can't say.
+   */
+  hostAccess: () => Promise<boolean | null>;
   now?: () => number;
   log?: (event: string, detail?: Record<string, unknown>) => void;
   /** Called after anything that can change the status (badge updates). */
@@ -109,17 +121,27 @@ export function createService(d: ServiceDeps) {
   }
 
   async function getStatus(): Promise<ProtectionStatus> {
-    const [installation, policy, sync, health, privateWindowsAllowed, safeBrowsing, installType, counts] =
-      await Promise.all([
-        d.state.installation.get(),
-        loadPolicy(),
-        d.state.sync.get(),
-        d.state.health.get(),
-        d.privateWindowsAllowed().catch(() => null),
-        d.safeBrowsing ? d.safeBrowsing.get().catch(() => null) : null,
-        d.installType().catch(() => null),
-        d.state.blockCounts.get(),
-      ]);
+    const [
+      installation,
+      policy,
+      sync,
+      health,
+      privateWindowsAllowed,
+      safeBrowsing,
+      installType,
+      hostAccess,
+      counts,
+    ] = await Promise.all([
+      d.state.installation.get(),
+      loadPolicy(),
+      d.state.sync.get(),
+      d.state.health.get(),
+      d.privateWindowsAllowed().catch(() => null),
+      d.safeBrowsing ? d.safeBrowsing.get().catch(() => null) : null,
+      d.installType().catch(() => null),
+      d.hostAccess().catch(() => null),
+      d.state.blockCounts.get(),
+    ]);
     // Read back from the browser every time: what's installed must be exactly what the verified policy requires
     const rulesVerified = installation
       ? await d.enforcement.verify(policy?.policy ?? null, new Date(now()))
@@ -134,6 +156,7 @@ export function createService(d: ServiceDeps) {
       sync,
       safeBrowsing,
       installType,
+      hostAccess,
       now: now(),
     });
     const status = deriveStatus({
@@ -171,7 +194,8 @@ export function createService(d: ServiceDeps) {
     const res = await fetchPolicy(d.tokens);
 
     if (!res.ok) {
-      if (res.kind === "unauthorized") return; // onRevoked already forgot the installation
+      // A confirmed removal already forgot the installation (onRevoked); an unconfirmed one is recorded like any error
+      if (res.kind === "unauthorized" && !(await d.state.installation.get())) return;
       await d.state.sync.set({
         ...prev,
         lastAttemptAt: attemptAt,
@@ -208,12 +232,26 @@ export function createService(d: ServiceDeps) {
   /**
    * Makes the browser's rules match the verified policy at this moment (focus hours and approvals depend on
    * the clock). No connection means no rules: a browser the parent removed stops being filtered.
+   *
+   * Connected but without a policy that verifies (the stored one was edited or no longer matches a trusted key),
+   * the rules already installed stay: they came from the last verified policy, and removing them would turn a
+   * tampered or unverifiable policy into no protection at all. The status says the rules aren't verified until a
+   * genuine policy arrives.
    */
   async function enforce(): Promise<boolean> {
     const installation = await d.state.installation.get();
-    const policy = installation ? await loadPolicy() : null;
-    const ok = await d.enforcement.apply(policy?.policy ?? null, new Date(now()));
-    await keepSafeBrowsing(policy?.policy.safeBrowsing ?? false);
+    if (!installation) {
+      const ok = await d.enforcement.apply(null, new Date(now()));
+      await keepSafeBrowsing(false);
+      return ok;
+    }
+    const policy = await loadPolicy();
+    if (!policy) {
+      log("rules_kept_without_policy");
+      return false;
+    }
+    const ok = await d.enforcement.apply(policy.policy, new Date(now()));
+    await keepSafeBrowsing(policy.policy.safeBrowsing);
     return ok;
   }
 
@@ -255,14 +293,25 @@ export function createService(d: ServiceDeps) {
     );
   }
 
+  // Counts are read, changed and written back; blocks reported at the same moment would lose increments, so
+  // every change to them (counting, sending) runs one after another.
+  let countsQueue: Promise<unknown> = Promise.resolve();
+  const serialCounts = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = countsQueue.then(fn, fn);
+    countsQueue = run.catch(() => {});
+    return run;
+  };
+
   /** One more blocked page today, under its category or reason. Never the site. */
-  async function countBlocked(key: string, timeZone: string | undefined): Promise<void> {
-    const day = dayIn(timeZone, new Date(now()));
-    const counts = (await d.state.blockCounts.get()) ?? {};
-    const today = counts[day] ?? {};
-    today[key] = (today[key] ?? 0) + 1;
-    counts[day] = today;
-    await d.state.blockCounts.set(counts);
+  function countBlocked(key: string, timeZone: string | undefined): Promise<void> {
+    return serialCounts(async () => {
+      const day = dayIn(timeZone, new Date(now()));
+      const counts = (await d.state.blockCounts.get()) ?? {};
+      const today = counts[day] ?? {};
+      today[key] = (today[key] ?? 0) + 1;
+      counts[day] = today;
+      await d.state.blockCounts.set(counts);
+    });
   }
 
   /**
@@ -290,10 +339,14 @@ export function createService(d: ServiceDeps) {
       }
       done.add(day);
     }
-    if (!(await d.state.installation.get())) return; // disconnected meanwhile
-    await d.state.blockCounts.set(
-      Object.fromEntries(Object.entries(counts).filter(([day]) => !done.has(day))),
-    );
+    await serialCounts(async () => {
+      if (!(await d.state.installation.get())) return; // disconnected meanwhile
+      // Re-read: pages blocked while the counts were being sent are kept
+      const latest = (await d.state.blockCounts.get()) ?? {};
+      await d.state.blockCounts.set(
+        Object.fromEntries(Object.entries(latest).filter(([day]) => !done.has(day))),
+      );
+    });
   }
 
   /** Everything the block page shows, worked out here from the verified policy (the page is never trusted). */
@@ -316,7 +369,9 @@ export function createService(d: ServiceDeps) {
             ? { type: "FOCUS_HOURS", until: policy.policy.schedule?.endTime ?? "" }
             : ev.reason.type === "UNKNOWN_SITE"
               ? { type: "UNKNOWN_SITE" }
-              : null;
+              : ev.reason.type === "SAFE_SEARCH"
+                ? { type: "SAFE_SEARCH" }
+                : null;
     let request: BlockInfo["request"] = null;
     if (ev.decision !== "ALLOW" && installation) {
       const res = await listAccessRequests(d.tokens);
@@ -354,7 +409,24 @@ export function createService(d: ServiceDeps) {
     return blockInfo(url);
   }
 
-  async function pairWithCode(code: string): Promise<void> {
+  // One pairing at a time: two codes sent together would both pass the "already connected" check
+  let pairing: Promise<void> | null = null;
+  function pairWithCode(code: string): Promise<void> {
+    if (pairing) {
+      return Promise.reject(
+        new UserFacingError(
+          "eGuard is already connecting this browser. Wait a moment.",
+          "PAIRING_IN_PROGRESS",
+        ),
+      );
+    }
+    pairing = pairOnce(code).finally(() => {
+      pairing = null;
+    });
+    return pairing;
+  }
+
+  async function pairOnce(code: string): Promise<void> {
     if (await d.state.installation.get()) {
       throw new UserFacingError(
         "This browser is already connected to eGuard. To connect it to a different child, remove it in the parent dashboard first.",

@@ -17,7 +17,7 @@ These are promises about the shipped code, not settings. A change that would bre
 1. eGuard downloads the family's policy: blocked and allowed sites, blocked categories, SafeSearch and schedule.
 2. It turns the policy into rules the **browser itself** evaluates (`declarativeNetRequest`). Pages that load normally are never shown to eGuard's code.
 3. When a rule blocks a page, the browser reports a failed load, and only failed loads are shown to eGuard's code (`webNavigation.onErrorOccurred`). eGuard uses that to show its block page with the site's name and, if the child chooses, to include it in an access request. It doesn't store or send failed or blocked addresses otherwise.
-4. For reports, eGuard keeps **daily counts per category or reason** ("3 gaming pages blocked on Sep 28"; reasons without a category are `BLOCKED_SITE`, `UNKNOWN_SITE`, `FOCUS_HOURS`), never which site. The count goes up when the block page is shown, is stored in the browser by day, and a finished day is sent once and then deleted from the browser.
+4. For reports, eGuard keeps **daily counts per category or reason** ("3 gaming pages blocked on Sep 28"; reasons without a category are `BLOCKED_SITE`, `UNKNOWN_SITE`, `FOCUS_HOURS`, `SAFE_SEARCH`), never which site. The count goes up when the block page is shown, is stored in the browser by day, and a finished day is sent once and then deleted from the browser.
 
 ## What is sent to eGuard's servers
 

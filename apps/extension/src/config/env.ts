@@ -20,11 +20,17 @@ export const EnvSchema = z
     VITE_API_URL: origin,
     VITE_WEB_APP_URL: origin,
     VITE_ENVIRONMENT: Environment,
-    /** base64 SPKI of the key that signs browser policies (~/eguard: node scripts/browser-policy-keys.mjs) */
+    /**
+     * base64 SPKI of the key that signs browser policies (~/eguard: node scripts/browser-policy-keys.mjs). During a
+     * key rotation, the old and new keys separated by a comma: both verify until the old one is dropped.
+     */
     VITE_POLICY_PUBLIC_KEY: z
       .string()
       .trim()
-      .regex(/^[A-Za-z0-9+/]{80,}={0,2}$/, "Set the policy public key from the eGuard server (base64 SPKI)"),
+      .regex(
+        /^[A-Za-z0-9+/]{80,}={0,2}(\s*,\s*[A-Za-z0-9+/]{80,}={0,2})*$/,
+        "Set the policy public key from the eGuard server (base64 SPKI; several separated by commas)",
+      ),
   })
   .superRefine((env, ctx) => {
     if (env.VITE_ENVIRONMENT !== "production") return;

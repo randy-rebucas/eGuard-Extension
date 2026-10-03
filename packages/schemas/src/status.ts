@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BrowserInfo } from "./browser.ts";
 import { CheckStatus } from "./capability.ts";
-import { UnknownSitesPolicy, WebCategory } from "./policy.ts";
+import { CategoryKey, UnknownSitesPolicy } from "./policy.ts";
 
 /** The family's settings in force, for display. Counts only: the popup never lists sites. */
 export const PolicySummary = z.object({
@@ -9,11 +9,12 @@ export const PolicySummary = z.object({
   safeBrowsing: z.boolean(),
   blockedCategories: z.number().int(),
   /** Which categories the family blocks: kinds of site, never sites. */
-  categories: z.array(WebCategory),
+  categories: z.array(CategoryKey),
   /** Pages blocked so far today on this browser, per category or reason (the same counts eGuard receives). */
   blockedToday: z.record(z.string(), z.number().int()),
   blockedSites: z.number().int(),
   allowedSites: z.number().int(),
+  /** What eGuard enforces for other websites (a mode this build doesn't know is shown as the BLOCK it enforces). */
   otherSites: UnknownSitesPolicy,
   focusHours: z.object({ startTime: z.string(), endTime: z.string(), activeNow: z.boolean() }).nullable(),
 });
@@ -52,6 +53,7 @@ export const HealthCheckId = z.enum([
   "policy_signature",
   "rules_installed",
   "private_windows",
+  "site_access",
   "sync_fresh",
   "safe_browsing",
   "force_installed",

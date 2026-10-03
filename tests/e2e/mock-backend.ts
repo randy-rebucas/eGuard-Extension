@@ -147,8 +147,12 @@ export async function startMockBackend(port: number) {
         }
         case "POST /api/browser/v1/token": {
           const rt = (body as { refreshToken?: string } | null)?.refreshToken ?? "";
-          if (state.revoked || !state.refreshTokens.delete(rt)) {
-            send(res, 401, { error: "This browser was removed from eGuard." });
+          if (state.revoked) {
+            send(res, 401, { error: "This browser was removed from eGuard.", code: "installation_revoked" });
+            return;
+          }
+          if (!state.refreshTokens.delete(rt)) {
+            send(res, 401, { error: "This browser is no longer connected to eGuard.", code: "unauthorized" });
             return;
           }
           send(res, 200, grant(state));

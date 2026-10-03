@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Handler } from "@eguard/api-client/testing";
+import { exactHostFilter } from "./enforcement.ts";
 import { harness, pairOk, policy, signFor, signed, tok } from "./test-harness.ts";
 
 const PAIR = "/api/browser/v1/pair";
 const POLICY = "/api/browser/v1/policy";
 const TOKEN = "/api/browser/v1/token";
+/** What /token answers once a parent removed the browser. */
+const revoked: Handler = () => ({ status: 401, json: { error: "Removed", code: "installation_revoked" } });
 
 describe("pairing", () => {
   it("stores credentials, downloads the first policy, and never stores a password", async () => {
@@ -61,11 +64,21 @@ describe("pairing", () => {
     await expect(h.service.pairWithCode("111111")).rejects.toMatchObject({ code: "ALREADY_PAIRED" });
     expect(h.calls.filter((c) => c.path === PAIR)).toHaveLength(1);
   });
+
+  it("pairs once when two codes are sent at the same moment", async () => {
+    const h = harness({ [PAIR]: pairOk, [POLICY]: () => ({ status: 200, json: signed(policy(1)) }) });
+    const results = await Promise.allSettled([
+      h.service.pairWithCode("824917"),
+      h.service.pairWithCode("111111"),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(h.calls.filter((c) => c.path === PAIR)).toHaveLength(1);
+  });
 });
 
 describe("policy sync", () => {
   async function paired(policyRoutes: Handler | Handler[]) {
-    const h = harness({ [PAIR]: pairOk, [POLICY]: policyRoutes, [TOKEN]: () => ({ status: 401 }) });
+    const h = harness({ [PAIR]: pairOk, [POLICY]: policyRoutes, [TOKEN]: revoked });
     await h.service.pairWithCode("824917");
     return h;
   }
@@ -141,6 +154,21 @@ describe("policy sync", () => {
     expect((await h.service.getStatus()).connection.paired).toBe(false);
   });
 
+  it("keeps protecting through an unexplained 401, and says it couldn't sync", async () => {
+    const h = harness({
+      [PAIR]: pairOk,
+      [POLICY]: [() => ({ status: 200, json: signed(policy(1)) }), () => ({ status: 401 })],
+      [TOKEN]: () => ({ status: 401, json: { error: "Not connected", code: "unauthorized" } }),
+    });
+    await h.service.pairWithCode("824917");
+    await h.service.syncPolicy();
+    const s = await h.service.getStatus();
+    expect(s.connection.paired).toBe(true);
+    expect(s.policyVersion).toBe(1);
+    expect(h.browserRules.dynamic.length).toBeGreaterThan(0);
+    expect((await h.state.sync.get())?.lastError?.kind).toBe("unauthorized");
+  });
+
   it("requires a connection", async () => {
     await expect(harness().service.syncPolicy()).rejects.toMatchObject({ code: "NOT_CONNECTED" });
   });
@@ -190,11 +218,15 @@ describe("policy signatures", () => {
     // e.g. someone with developer tools empties the blocked list
     await h.state.policy.set({ ...stored, policy: { ...stored.policy, blockedDomains: [] } });
 
+    const rulesBefore = structuredClone(h.browserRules.dynamic);
     const s = await h.service.getStatus();
     expect(s.policyVersion).toBeNull();
     expect(s.state).toBe("ACTION_REQUIRED");
     expect(await h.state.policy.get()).toBeNull();
     expect(h.log).toHaveBeenCalledWith("stored_policy_invalid", { version: 4 });
+    // The rules from the last verified policy stay until a genuine one arrives: tampering never unblocks
+    expect(await h.service.enforce()).toBe(false);
+    expect(h.browserRules.dynamic).toEqual(rulesBefore);
 
     await h.service.syncPolicy();
     expect((await h.service.getStatus()).policyVersion).toBe(4);
@@ -268,6 +300,42 @@ describe("enforcement", () => {
     expect((await h.service.getStatus()).issues[0]?.id).toBe("private-windows");
   });
 
+  it("isn't PROTECTED when site access was withdrawn in the browser's settings", async () => {
+    const h = await pairedWith([policy(1)]);
+    h.setHostAccess(false);
+    const s = await h.service.getStatus();
+    expect(s.state).toBe("NEEDS_ATTENTION");
+    expect(s.issues.map((i) => i.id)).toEqual(["site-access"]);
+    h.setHostAccess(true);
+    expect((await h.service.getStatus()).state).toBe("PROTECTED");
+  });
+
+  it("enforces a category or 'other websites' mode newer than this build, strictly", async () => {
+    const h = await pairedWith([
+      {
+        ...policy(1),
+        blockedCategories: ["ADULT", "AI_CHAT"],
+        categoryDomains: { ADULT: ["adult.example"], AI_CHAT: ["chat.example"] },
+        unknownSitesPolicy: "ASK_FIRST",
+      },
+    ]);
+    expect((await h.service.getStatus()).policyVersion).toBe(1);
+    expect(await h.service.blockInfo("https://chat.example/")).toMatchObject({
+      decision: "BLOCK",
+      reason: { type: "CATEGORY", category: "AI_CHAT" },
+    });
+    expect((await h.service.blockInfo("https://news.example.org/")).decision).toBe("BLOCK");
+    expect((await h.service.getStatus()).policySummary?.otherSites).toBe("BLOCK");
+  });
+
+  it("counts every block, even when they're reported at the same moment", async () => {
+    const h = await pairedWith([policy(1)]);
+    await Promise.all(
+      Array.from({ length: 5 }, (_, i) => h.service.onNavigationError(i, "https://www.example.com/")),
+    );
+    expect(Object.values((await h.state.blockCounts.get()) ?? {})).toEqual([{ BLOCKED_SITE: 5 }]);
+  });
+
   it("removes every rule when the parent removes the browser", async () => {
     const h = await pairedWith([policy(1)]);
     await h.state.forgetInstallation();
@@ -306,10 +374,44 @@ describe("enforcement", () => {
 
     await h.service.continueToSite("https://news.example.org/story");
     expect(h.browserRules.session).toMatchObject([
-      { priority: 100, action: { type: "allow" }, condition: { requestDomains: ["news.example.org"] } },
+      {
+        priority: 100,
+        action: { type: "allow" },
+        condition: { regexFilter: exactHostFilter("news.example.org") },
+      },
     ]);
+    expect(h.browserRules.session[0]?.condition.requestDomains).toBeUndefined();
     await h.service.onNavigationError(3, "https://news.example.org/story");
     expect(h.openBlockPage).not.toHaveBeenCalled();
+  });
+
+  it("opens only the exact site a child continued to, never its subdomains or a whole domain ending", async () => {
+    const h = await pairedWith([{ ...policy(1), unknownSitesPolicy: "WARN" }]);
+    // "com" is a host no list mentions, so it only warns; Continue must not open every .com site
+    await h.service.continueToSite("http://com/");
+    await h.service.continueToSite("https://news.example.org/");
+    const filters = h.browserRules.session.map((r) => new RegExp(r.condition.regexFilter!));
+    const opens = (url: string) => filters.some((re) => re.test(url));
+    expect(opens("http://com/")).toBe(true);
+    expect(opens("https://news.example.org/a?b#c")).toBe(true);
+    expect(opens("https://news.example.org:8443/")).toBe(true);
+    expect(opens("https://www.example.com/")).toBe(false); // blocked site, ends in .com
+    expect(opens("https://games.news.example.org/")).toBe(false);
+    expect(opens("https://news.example.org.evil.test/")).toBe(false);
+    expect(opens("https://evil.test/?u=https://news.example.org/")).toBe(false);
+  });
+
+  it("ends a Continue as soon as the policy no longer just warns about that site", async () => {
+    const h = await pairedWith([
+      { ...policy(1), unknownSitesPolicy: "WARN" },
+      { ...policy(2), unknownSitesPolicy: "WARN", blockedDomains: ["example.com", "news.example.org"] },
+    ]);
+    await h.service.continueToSite("https://news.example.org/");
+    expect(h.browserRules.session).toHaveLength(1);
+    await h.service.syncPolicy(); // the parent blocks it
+    expect(h.browserRules.session).toEqual([]);
+    await h.service.onNavigationError(4, "https://news.example.org/");
+    expect(h.openBlockPage).toHaveBeenCalledWith(4, "https://news.example.org/");
   });
 
   it("asks a parent, and opens the site once a new policy allows it", async () => {

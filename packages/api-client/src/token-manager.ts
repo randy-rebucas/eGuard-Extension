@@ -3,8 +3,15 @@ import { TokenGrant } from "@eguard/schemas";
 import type { ApiResult, HttpClient, RequestOptions } from "./http.ts";
 import { PATHS } from "./paths.ts";
 
-/** Long-lived installation credential. Kept in storage.local; never contains a parent's password. */
-export type InstallationCredential = { installationId: string; refreshToken: string };
+/**
+ * Long-lived installation credential. Kept in storage.local; never contains a parent's password.
+ * `rejectedSince`: when /token first refused it without saying the browser was removed (see REVOKE_CONFIRM_MS).
+ */
+export type InstallationCredential = {
+  installationId: string;
+  refreshToken: string;
+  rejectedSince?: string | undefined;
+};
 /** Short-lived access token. Kept in storage.session (memory) where the browser supports it. */
 export type AccessToken = { token: string; expiresAt: string };
 
@@ -28,6 +35,15 @@ export const EXPIRY_SKEW_MS = 60_000;
  */
 export const REFRESH_RETRY_DELAYS_MS = [2_000, 8_000] as const;
 const RETRYABLE = new Set(["network", "timeout", "server"]);
+
+/** Error codes with which /token says this browser was removed or disconnected: forget it at once. */
+export const REVOKED_CODES = new Set(["installation_revoked", "token_reused"]);
+/**
+ * A 401 from /token without one of those codes could be a server fault, and forgetting the installation removes
+ * every rule and needs a parent to pair again. So it only counts once /token has kept refusing for this long
+ * (two sync rounds). Protection stays on in the meantime.
+ */
+export const REVOKE_CONFIRM_MS = 10 * 60_000;
 
 export type TokenManagerOptions = {
   http: HttpClient;
@@ -62,16 +78,25 @@ export function createTokenManager({
         status: null,
         message: "This browser isn't connected to eGuard yet.",
       };
-    let res = await http.request(PATHS.token, TokenGrant, { body: cred });
+    const body = { installationId: cred.installationId, refreshToken: cred.refreshToken };
+    let res = await http.request(PATHS.token, TokenGrant, { body });
     for (const delay of REFRESH_RETRY_DELAYS_MS) {
       if (res.ok || !RETRYABLE.has(res.kind)) break;
       await sleep(delay);
-      res = await http.request(PATHS.token, TokenGrant, { body: cred });
+      res = await http.request(PATHS.token, TokenGrant, { body });
     }
     if (!res.ok) {
       if (res.kind === "unauthorized") {
-        await store.clear();
-        await onRevoked?.();
+        const since = cred.rejectedSince ? Date.parse(cred.rejectedSince) : null;
+        const confirmed =
+          (res.code !== undefined && REVOKED_CODES.has(res.code)) ||
+          (since !== null && now() - since >= REVOKE_CONFIRM_MS);
+        if (confirmed) {
+          await store.clear();
+          await onRevoked?.();
+        } else if (since === null) {
+          await store.setCredential({ ...cred, rejectedSince: new Date(now()).toISOString() });
+        }
       }
       return res;
     }

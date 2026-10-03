@@ -3,6 +3,8 @@ import { z } from "zod";
 import { createHttpClient } from "./http.ts";
 import {
   REFRESH_RETRY_DELAYS_MS,
+  REVOKE_CONFIRM_MS,
+  REVOKED_CODES,
   createTokenManager,
   type AccessToken,
   type CredentialStore,
@@ -44,12 +46,16 @@ const grant =
     },
   });
 
-function setup(routes: Parameters<typeof fakeFetch>[0], store: ReturnType<typeof memoryStore>) {
+function setup(
+  routes: Parameters<typeof fakeFetch>[0],
+  store: ReturnType<typeof memoryStore>,
+  clock = { t: NOW },
+) {
   const f = fakeFetch(routes);
   const onRevoked = vi.fn();
   const http = createHttpClient({ baseUrl: "https://api.test", fetch: f.fetch });
   const sleep = vi.fn(async (_ms: number) => {});
-  const tm = createTokenManager({ http, store, now: () => NOW, sleep, onRevoked });
+  const tm = createTokenManager({ http, store, now: () => clock.t, sleep, onRevoked });
   return { tm, calls: f.calls, onRevoked, sleep };
 }
 
@@ -83,15 +89,51 @@ describe("token manager", () => {
     expect(results.every((r) => r.ok && r.data.token === tok("at1"))).toBe(true);
   });
 
-  it("forgets credentials once when the backend revokes the installation", async () => {
+  it("forgets credentials once when the backend says the installation was removed", async () => {
+    for (const code of REVOKED_CODES) {
+      const store = memoryStore({ installationId: "bi_1", refreshToken: tok("rt0") });
+      const { tm, onRevoked } = setup(
+        { "/api/browser/v1/token": () => ({ status: 401, json: { error: "Removed", code } }) },
+        store,
+      );
+      expect(await tm.accessToken()).toMatchObject({ ok: false, kind: "unauthorized" });
+      expect(store.cred).toBeNull();
+      expect(onRevoked).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("doesn't forget the browser on a bare 401 until /token keeps refusing it (a server fault isn't a removal)", async () => {
     const store = memoryStore({ installationId: "bi_1", refreshToken: tok("rt0") });
-    const { tm, onRevoked } = setup(
-      { "/api/browser/v1/token": () => ({ status: 401, json: { error: "Revoked" } }) },
+    const clock = { t: NOW };
+    const { tm, onRevoked, calls } = setup(
+      { "/api/browser/v1/token": () => ({ status: 401, json: { error: "x", code: "unauthorized" } }) },
       store,
+      clock,
     );
     expect(await tm.accessToken()).toMatchObject({ ok: false, kind: "unauthorized" });
+    expect(store.cred).toMatchObject({ refreshToken: tok("rt0"), rejectedSince: later(0) });
+    clock.t = NOW + REVOKE_CONFIRM_MS - 1;
+    await tm.accessToken();
+    expect(onRevoked).not.toHaveBeenCalled();
+    // Only the credential itself goes to the server, never the bookkeeping
+    expect(calls.every((c) => Object.keys(c.body as object).length === 2)).toBe(true);
+
+    clock.t = NOW + REVOKE_CONFIRM_MS;
+    await tm.accessToken();
     expect(store.cred).toBeNull();
     expect(onRevoked).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears an unconfirmed refusal once a refresh works again", async () => {
+    const store = memoryStore({ installationId: "bi_1", refreshToken: tok("rt0") });
+    const { tm } = setup(
+      { "/api/browser/v1/token": [() => ({ status: 401, json: { error: "x" } }), grant(1)] },
+      store,
+    );
+    await tm.accessToken();
+    expect(store.cred?.rejectedSince).toBeDefined();
+    expect(await tm.accessToken()).toMatchObject({ ok: true });
+    expect(store.cred).toEqual({ installationId: "bi_1", refreshToken: tok("rt1") });
   });
 
   it("keeps credentials when the refresh merely fails to reach the server", async () => {

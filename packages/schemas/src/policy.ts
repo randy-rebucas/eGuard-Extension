@@ -3,15 +3,16 @@ import { z } from "zod";
 /**
  * A host name as the policy engine stores it: lower-case, no scheme, port, path or trailing dot.
  * Wildcards are implied (a rule for example.com also covers www.example.com).
+ * No trimming or lower-casing: the signature is checked over the parsed value, so a transform would turn a
+ * signed policy into one that fails verification. The server sends normalised names; anything else is refused.
  */
 export const Domain = z
   .string()
-  .trim()
-  .toLowerCase()
   .max(253)
   .regex(/^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/, "Not a valid domain");
 export type Domain = z.infer<typeof Domain>;
 
+/** The categories this build has labels for. Policies may carry newer ones (see CategoryKey). */
 export const WebCategory = z.enum([
   "ADULT",
   "GAMBLING",
@@ -32,7 +33,15 @@ export type WebCategory = z.infer<typeof WebCategory>;
 
 const HHMM = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM");
 
+/**
+ * A category key as the server sends it. Open-ended on purpose: a category added on the server after this build
+ * shipped must not make every policy fail to parse (that would freeze every installed browser on its last policy).
+ * Its sites are blocked like any other; the block page calls it "other". Same shape POST /events accepts.
+ */
+export const CategoryKey = z.string().regex(/^[A-Z][A-Z_]{1,31}$/, "Not a category key");
+
 export const UnknownSitesPolicy = z.enum(["ALLOW", "WARN", "BLOCK"]);
+export type UnknownSitesPolicy = z.infer<typeof UnknownSitesPolicy>;
 
 /**
  * The browser policy the backend sends. Versioned: the extension only ever moves forward,
@@ -49,10 +58,11 @@ export const BrowserProtectionPolicy = z.looseObject({
   version: z.number().int().positive(),
   safeBrowsing: z.boolean(),
   safeSearch: z.boolean(),
-  blockedCategories: z.array(WebCategory).max(WebCategory.options.length),
+  blockedCategories: z.array(CategoryKey).max(64),
   blockedDomains: z.array(Domain).max(5000),
   allowedDomains: z.array(Domain).max(5000),
-  unknownSitesPolicy: UnknownSitesPolicy,
+  /** ALLOW, WARN or BLOCK; a mode this build doesn't know is enforced as BLOCK (policy-engine otherSitesDecision). */
+  unknownSitesPolicy: z.string().regex(/^[A-Z][A-Z_]{1,31}$/),
   schedule: z
     .looseObject({
       enabled: z.boolean(),
@@ -70,7 +80,7 @@ export const BrowserProtectionPolicy = z.looseObject({
    * Sites on eGuard's lists for the categories this family blocks (only those). Signed with the policy.
    * No defaults or transforms here: the signature is checked over exactly what was parsed.
    */
-  categoryDomains: z.partialRecord(WebCategory, z.array(Domain).max(50_000)),
+  categoryDomains: z.record(CategoryKey, z.array(Domain).max(50_000)),
   updatedAt: z.iso.datetime({ offset: true }),
 });
 export type BrowserProtectionPolicy = z.infer<typeof BrowserProtectionPolicy>;

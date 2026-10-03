@@ -100,6 +100,10 @@ test("'Warn first' sites can be continued; 'allowed only' sites can't", async ({
   await expect(page.getByRole("heading", { name: "Before you continue" })).toBeVisible();
   await page.getByRole("button", { name: "Continue to site" }).click();
   await expect(page.getByRole("heading", { name: "Welcome to news.example" })).toBeVisible();
+  // Continue opened that exact site only, not its subdomains
+  const sub = await visit(context, site("games.news"));
+  await onBlockPage(sub);
+  await expect(sub.getByRole("heading", { name: "Before you continue" })).toBeVisible();
 
   // A parent switches to allowed-only: no Continue button, and the worker refuses one anyway
   backend.state.policyVersion = 2;
@@ -135,8 +139,18 @@ test("SafeSearch rules are installed for the search engines", async ({ context, 
   expect(redirects).toEqual([
     ["^https?://(www\\.)?google\\.com/search\\?", { key: "safe", value: "active" }],
     ["^https?://(www\\.)?google\\.com\\.ph/search\\?", { key: "safe", value: "active" }],
-    ["^https?://(www\\.)?bing\\.com/search\\?", { key: "adlt", value: "strict" }],
-    ["^https?://(www\\.)?duckduckgo\\.com/\\?", { key: "kp", value: "1" }],
+    ["^https?://(www\\.)?bing\\.com/((images|videos|news)/)?search\\?", { key: "adlt", value: "strict" }],
+    ["^https?://((www|html|lite)\\.)?duckduckgo\\.com/((html|lite)/?)?\\?", { key: "kp", value: "1" }],
+  ]);
+  // Google's other country domains can't get SafeSearch (no host access), so their searches are blocked.
+  // Installed and read back means the browser accepted the regex and the exclusions.
+  const unsupported = await worker.evaluate(async () =>
+    (await chrome.declarativeNetRequest.getDynamicRules()).filter(
+      (r) => r.action.type === "block" && r.condition.regexFilter?.includes("google"),
+    ),
+  );
+  expect(unsupported).toMatchObject([
+    { priority: 110, condition: { excludedRequestDomains: ["google.com", "google.com.ph"] } },
   ]);
 });
 

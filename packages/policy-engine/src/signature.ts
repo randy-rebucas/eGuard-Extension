@@ -36,6 +36,40 @@ export function importPolicyKey(spkiBase64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("spki", base64ToBytes(spkiBase64), ALG, false, ["verify"]);
 }
 
+/**
+ * Imports every key the build trusts: VITE_POLICY_PUBLIC_KEY holds one base64 SPKI, or several separated by commas
+ * during a key rotation (old and new), so policies signed with either verify. A key that fails to import is
+ * skipped and reported through `onInvalid`.
+ */
+export async function importPolicyKeys(
+  list: string,
+  onInvalid?: (index: number, err: unknown) => void,
+): Promise<CryptoKey[]> {
+  const parts = list
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const keys = await Promise.all(
+    parts.map((p, i) =>
+      importPolicyKey(p).catch((err: unknown) => {
+        onInvalid?.(i, err);
+        return null;
+      }),
+    ),
+  );
+  return keys.filter((k): k is CryptoKey => k !== null);
+}
+
+/** True when any trusted key verifies `signature` over this policy. */
+export async function verifyWithAnyKey(
+  keys: CryptoKey[],
+  policy: unknown,
+  signature: string,
+): Promise<boolean> {
+  for (const key of keys) if (await verifyPolicySignature(key, policy, signature)) return true;
+  return false;
+}
+
 /** True only when `signature` (base64, raw r||s) is eGuard's signature over exactly this policy. */
 export async function verifyPolicySignature(
   key: CryptoKey,

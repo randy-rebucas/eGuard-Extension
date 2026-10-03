@@ -1,6 +1,14 @@
+import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { badgeText, expect, onboardingPage, test } from "./fixtures.ts";
+
+/** The version the build puts in the manifest, which pairing reports. */
+const EXTENSION_VERSION = (
+  JSON.parse(readFileSync(new URL("../../apps/extension/package.json", import.meta.url), "utf8")) as {
+    version: string;
+  }
+).version;
 
 async function pairThroughOnboarding(page: Page, code = "824917") {
   await page.getByRole("button", { name: "Get started" }).click();
@@ -62,7 +70,7 @@ test("pairing: a bad code shows the server's reason, a good code connects and do
   const pairCalls = backend.state.requests.filter((r) => r.path === "/api/browser/v1/pair");
   expect(pairCalls.map((r) => r.body)).toMatchObject([
     { code: "000000" },
-    { code: "824917", browser: "Chrome", extensionVersion: "0.1.0" },
+    { code: "824917", browser: "Chrome", extensionVersion: EXTENSION_VERSION },
   ]);
   expect(JSON.stringify(backend.state.requests)).not.toMatch(/password/i);
 

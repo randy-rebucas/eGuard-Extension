@@ -10,6 +10,7 @@ import {
   Gamepad2,
   Heart,
   Pill,
+  Search,
   ShoppingCart,
   Swords,
   TriangleAlert,
@@ -44,6 +45,7 @@ const REASONS: Record<string, { label: string; Icon: LucideIcon }> = {
   BLOCKED_SITE: { label: "Blocked sites", Icon: CircleSlash },
   FOCUS_HOURS: { label: "Focus hours", Icon: Clock },
   UNKNOWN_SITE: { label: "Not on the allowed list", Icon: Fingerprint },
+  SAFE_SEARCH: { label: "Searches outside SafeSearch", Icon: Search },
 };
 
 /** Label and icon for a category or a block reason ("GAMING", "FOCUS_HOURS"). */
