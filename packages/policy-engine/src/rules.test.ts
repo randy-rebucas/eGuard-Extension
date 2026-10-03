@@ -188,6 +188,43 @@ describe("rule comparison", () => {
     expect(sameRules(expected, installed)).toBe(true);
   });
 
+  it("matches redirects as Firefox stores them (nulls for unset fields, replaceOnly: false)", () => {
+    const expected = compileRules({ ...policy(), safeSearch: true }, { now: NOW });
+    expect(expected.some((r) => r.action.type === "redirect")).toBe(true);
+    const installed = expected.map((r) =>
+      r.action.type === "redirect"
+        ? {
+            ...r,
+            action: {
+              type: "redirect",
+              redirect: {
+                extensionPath: null,
+                url: null,
+                regexSubstitution: null,
+                transform: {
+                  scheme: null,
+                  host: null,
+                  queryTransform: {
+                    removeParams: null,
+                    addOrReplaceParams: r.action.redirect.transform.queryTransform.addOrReplaceParams.map(
+                      (p) => ({ ...p, replaceOnly: false }),
+                    ),
+                  },
+                },
+              },
+            },
+          }
+        : r,
+    );
+    expect(sameRules(expected, installed)).toBe(true);
+    const otherParam = structuredClone(installed);
+    const redirect = otherParam.find((r) => r.action.type === "redirect")!.action as {
+      redirect: { transform: { queryTransform: { addOrReplaceParams: { value: string }[] } } };
+    };
+    redirect.redirect.transform.queryTransform.addOrReplaceParams[0]!.value = "off";
+    expect(sameRules(expected, otherParam)).toBe(false);
+  });
+
   it("notices a removed, changed or extra rule", () => {
     const expected = compileRules(policy(), { now: NOW });
     expect(sameRules(expected, expected.slice(1))).toBe(false);

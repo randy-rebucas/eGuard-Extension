@@ -146,7 +146,7 @@ export function ruleFingerprint(r: {
   return canonicalJson({
     id: r.id,
     priority: r.priority ?? 1,
-    action: { type: r.action.type, redirect: r.action.redirect ?? null },
+    action: { type: r.action.type, redirect: withoutDefaults(r.action.redirect) ?? null },
     condition: {
       requestDomains: r.condition.requestDomains ? [...r.condition.requestDomains].sort() : null,
       urlFilter: r.condition.urlFilter ?? null,
@@ -154,6 +154,20 @@ export function ruleFingerprint(r: {
       resourceTypes: r.condition.resourceTypes ? [...r.condition.resourceTypes].sort() : null,
     },
   });
+}
+
+/**
+ * Firefox stores a redirect with every optional field it didn't get as null, and replaceOnly as false (its
+ * default). Dropping null, false and what's left empty compares only what was set.
+ */
+function withoutDefaults(v: unknown): unknown {
+  if (v === null || v === undefined || v === false) return undefined;
+  if (Array.isArray(v)) return v.map((x) => withoutDefaults(x) ?? null);
+  if (typeof v !== "object") return v;
+  const entries = Object.entries(v)
+    .map(([k, x]) => [k, withoutDefaults(x)] as const)
+    .filter(([, x]) => x !== undefined);
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 /** True when `installed` does exactly what `expected` does: no rule missing, changed or extra. */
