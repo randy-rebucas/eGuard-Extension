@@ -3,9 +3,18 @@
 All notable changes to the eGuard browser extension. Versions match `apps/extension/package.json` and the store
 uploads in `release/`.
 
-## Unreleased
+## 0.1.3 — 2026-10-03
 
-Fixes from the 2026-10-03 audit. No new permissions and no new data collected.
+Security release with the fixes from the 2026-10-03 audit. No new permissions and no new data collected: the manifest
+is identical to 0.1.2 apart from the version.
+
+### What's new (store listing text)
+
+> - "Continue" on a website your family asked to be warned about now opens only that website.
+> - SafeSearch now also covers Bing image, video and news search and DuckDuckGo's simple versions. Searches on other
+>   Google country sites send you to google.com, where SafeSearch works.
+> - eGuard tells you if its site access is turned off in the browser's settings.
+> - Protection stays on through server hiccups and updates to eGuard's security keys.
 
 ### Security
 
@@ -50,6 +59,20 @@ Fixes from the 2026-10-03 audit. No new permissions and no new data collected.
 
 - README, ARCHITECTURE, SECURITY, API docs and the Browser Extension API reference updated: test counts, the
   `policy-engine` package, the duplicated threat-model row, 401 codes, key rotation, `site_access`.
+
+### Build
+
+- Production build: API `https://www.eguard.family`, the same policy-signing public key as 0.1.2.
+- Packages: `release/eguard-{chrome,edge,firefox}-0.1.3.zip`; source for AMO: `release/eguard-source-0.1.3.zip`.
+- Unit tests (162), Playwright end-to-end tests (15, Chromium), typecheck, lint and format check pass. The manual
+  production check in Chrome, Edge and Firefox from [RELEASE.md](docs/RELEASE.md#before-every-release) is still to run
+  before upload.
+
+### Notes for store reviewers
+
+No change to permissions, host permissions, content security policy or Firefox `data_collection_permissions`. The
+extension now also reads whether its own host permissions are still granted (`permissions.contains`, which needs no
+permission) to tell the parent when site access was turned off.
 
 ## 0.1.2 — 2026-10-03
 
