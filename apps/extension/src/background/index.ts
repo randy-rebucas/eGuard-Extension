@@ -46,6 +46,8 @@ const tokens = createTokenManager({
     log("installation_revoked");
     await state.forgetInstallation();
     await service.enforce();
+    // API §Disconnection: "show the setup page", which asks for a new code
+    await service.openOnboarding();
   },
 });
 
@@ -177,9 +179,12 @@ api.alarms.onAlarm.addListener((alarm) => {
 
 function start() {
   void ensureAlarms();
-  // Rules persist across restarts, but the clock may have moved past a focus-hours boundary meanwhile
+  // Rules persist across restarts, but the clock may have moved past a focus-hours boundary meanwhile.
+  // Then sync straight away (API: "every 5 minutes, and on browser start"): the browser may have been closed for
+  // days, and the parent sees it check in now rather than at the first alarm.
   void service
     .enforce()
+    .then(() => service.periodic())
     .then(() => service.getStatus())
     .catch((err: unknown) => log("startup_failed", { error: String(err) }));
 }

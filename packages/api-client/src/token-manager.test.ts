@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createHttpClient } from "./http.ts";
 import {
+  REFRESH_RETRY_DELAYS_MS,
   createTokenManager,
   type AccessToken,
   type CredentialStore,
@@ -47,8 +48,9 @@ function setup(routes: Parameters<typeof fakeFetch>[0], store: ReturnType<typeof
   const f = fakeFetch(routes);
   const onRevoked = vi.fn();
   const http = createHttpClient({ baseUrl: "https://api.test", fetch: f.fetch });
-  const tm = createTokenManager({ http, store, now: () => NOW, onRevoked });
-  return { tm, calls: f.calls, onRevoked };
+  const sleep = vi.fn(async (_ms: number) => {});
+  const tm = createTokenManager({ http, store, now: () => NOW, sleep, onRevoked });
+  return { tm, calls: f.calls, onRevoked, sleep };
 }
 
 describe("token manager", () => {
@@ -94,10 +96,38 @@ describe("token manager", () => {
 
   it("keeps credentials when the refresh merely fails to reach the server", async () => {
     const store = memoryStore({ installationId: "bi_1", refreshToken: tok("rt0") });
-    const { tm, onRevoked } = setup({ "/api/browser/v1/token": () => "network-error" }, store);
+    const { tm, onRevoked, calls } = setup({ "/api/browser/v1/token": () => "network-error" }, store);
     expect(await tm.accessToken()).toMatchObject({ ok: false, kind: "network" });
+    expect(calls).toHaveLength(1 + REFRESH_RETRY_DELAYS_MS.length);
     expect(store.cred).not.toBeNull();
     expect(onRevoked).not.toHaveBeenCalled();
+  });
+
+  it("re-sends a lost refresh at once, inside the server's 2-minute replay window", async () => {
+    const store = memoryStore({ installationId: "bi_1", refreshToken: tok("rt0") });
+    const { tm, calls, sleep } = setup(
+      { "/api/browser/v1/token": [() => "network-error", () => ({ status: 503 }), grant(1)] },
+      store,
+    );
+    expect(await tm.accessToken()).toMatchObject({ ok: true, data: { token: tok("at1") } });
+    // Every attempt presents the same (previous) refresh token; the server answers it with fresh tokens
+    expect(calls.map((c) => c.body)).toEqual(
+      Array(3).fill({ installationId: "bi_1", refreshToken: tok("rt0") }),
+    );
+    expect(sleep.mock.calls.flat().reduce((a, b) => a + b, 0)).toBeLessThan(60_000);
+    expect(store.cred?.refreshToken).toBe(tok("rt1"));
+  });
+
+  it("doesn't retry a refresh the server refused or rate-limited", async () => {
+    const store = memoryStore({ installationId: "bi_1", refreshToken: tok("rt0") });
+    const { tm, calls } = setup(
+      {
+        "/api/browser/v1/token": () => ({ status: 429, json: { error: "Slow down", code: "rate_limited" } }),
+      },
+      store,
+    );
+    expect(await tm.accessToken()).toMatchObject({ ok: false, kind: "rate_limited" });
+    expect(calls).toHaveLength(1);
   });
 
   it("retries an authorized request once after a 401", async () => {

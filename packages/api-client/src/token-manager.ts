@@ -20,10 +20,21 @@ export interface CredentialStore {
 /** Refresh this long before expiry, to cover clock skew and slow requests. */
 export const EXPIRY_SKEW_MS = 60_000;
 
+/**
+ * Pauses before re-sending a /token request whose answer never arrived. The server may have rotated without us
+ * seeing the reply; it accepts the previous refresh token again only within 2 minutes of that rotation, and after
+ * that treats it as copied and disconnects the browser. So retry now, not at the next 5-minute sync. Worst case
+ * (three 15 s timeouts plus these pauses) stays well inside the window.
+ */
+export const REFRESH_RETRY_DELAYS_MS = [2_000, 8_000] as const;
+const RETRYABLE = new Set(["network", "timeout", "server"]);
+
 export type TokenManagerOptions = {
   http: HttpClient;
   store: CredentialStore;
   now?: () => number;
+  /** Waits between /token retries (tests pass a no-op). */
+  sleep?: (ms: number) => Promise<void>;
   /** Called once when the backend rejects the refresh token (parent removed this browser). */
   onRevoked?: () => void | Promise<void>;
 };
@@ -33,7 +44,13 @@ export type TokenManagerOptions = {
  * Refresh tokens rotate on every use, so concurrent callers share one in-flight refresh:
  * two parallel refreshes would make the second one present an already-rotated token.
  */
-export function createTokenManager({ http, store, now = Date.now, onRevoked }: TokenManagerOptions) {
+export function createTokenManager({
+  http,
+  store,
+  now = Date.now,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  onRevoked,
+}: TokenManagerOptions) {
   let inFlight: Promise<ApiResult<AccessToken>> | null = null;
 
   async function refresh(): Promise<ApiResult<AccessToken>> {
@@ -45,7 +62,12 @@ export function createTokenManager({ http, store, now = Date.now, onRevoked }: T
         status: null,
         message: "This browser isn't connected to eGuard yet.",
       };
-    const res = await http.request(PATHS.token, TokenGrant, { body: cred });
+    let res = await http.request(PATHS.token, TokenGrant, { body: cred });
+    for (const delay of REFRESH_RETRY_DELAYS_MS) {
+      if (res.ok || !RETRYABLE.has(res.kind)) break;
+      await sleep(delay);
+      res = await http.request(PATHS.token, TokenGrant, { body: cred });
+    }
     if (!res.ok) {
       if (res.kind === "unauthorized") {
         await store.clear();

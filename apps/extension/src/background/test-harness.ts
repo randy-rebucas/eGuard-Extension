@@ -89,6 +89,7 @@ export function harness(
     http,
     store: state.credentials,
     now: () => NOW,
+    sleep: async () => {},
     onRevoked: () => state.forgetInstallation(),
   });
   const openTab: Mock<(url: string) => Promise<void>> = vi.fn(async (_url: string) => {});

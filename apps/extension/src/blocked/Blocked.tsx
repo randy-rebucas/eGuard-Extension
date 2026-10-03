@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Ban, Clock, Lock, Send, Sprout, Tag, UserRound, type LucideIcon } from "lucide-react";
 import type { BlockInfo } from "@eguard/schemas";
 import { categoryVisual } from "../shared/categories.ts";
@@ -21,6 +21,9 @@ const CATEGORY_LABEL: Record<string, string> = {
   SHOPPING: "shopping",
   DOWNLOADS: "downloads",
 };
+
+/** How often an open block page asks whether a parent answered (the API suggests every 15–30 s). */
+const ANSWER_POLL_MS = 20_000;
 
 function to12h(hhmm: string) {
   const [h = 0, m = 0] = hhmm.split(":").map(Number);
@@ -70,6 +73,8 @@ export function Blocked() {
   const [checkedNoChange, setCheckedNoChange] = useState(false);
   const reasonId = useId();
 
+  const fetchedForApproval = useRef(false);
+
   /** Applies the worker's answer: if the site is allowed now (a parent said yes, or settings changed), open it. */
   const apply = (next: BlockInfo | undefined) => {
     if (!next) return;
@@ -80,12 +85,42 @@ export function Blocked() {
     setInfo(next);
   };
 
+  /**
+   * An approval only takes effect through the next signed policy, so when a request shows APPROVED but the site is
+   * still blocked, fetch the policy straight away (once per answer) instead of waiting for the 5-minute sync.
+   */
+  const answer = async (next: BlockInfo | undefined) => {
+    const status = next?.request?.status;
+    if (status === "PENDING") fetchedForApproval.current = false;
+    if (next && next.decision !== "ALLOW" && status === "APPROVED" && !fetchedForApproval.current) {
+      fetchedForApproval.current = true;
+      const res = await send({ type: "CHECK_ACCESS", url });
+      if (res.ok && res.block) next = res.block;
+    }
+    apply(next);
+  };
+
   useEffect(() => {
     void send({ type: "GET_BLOCK_INFO", url }).then((res) => {
-      if (res.ok) apply(res.block);
+      if (res.ok) void answer(res.block);
       else setError(res.error);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per blocked URL
   }, [url]);
+
+  // While a parent hasn't answered, look for the answer (GET /access-requests has no rate limit; 20 s is plenty)
+  const waiting = info?.request?.status === "PENDING";
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      void send({ type: "GET_BLOCK_INFO", url }).then((res) => {
+        if (res.ok) void answer(res.block);
+      });
+    }, ANSWER_POLL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restarts only when waiting starts or stops
+  }, [waiting, url]);
 
   async function run(kind: "continue" | "request" | "check") {
     setBusy(kind);

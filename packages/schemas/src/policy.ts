@@ -37,9 +37,12 @@ export const UnknownSitesPolicy = z.enum(["ALLOW", "WARN", "BLOCK"]);
 /**
  * The browser policy the backend sends. Versioned: the extension only ever moves forward,
  * and keeps the last valid one when offline (see docs/ARCHITECTURE.md §Offline).
- * Enforcement arrives in Phase 3/4; the schema is fixed now so the API contract is settled.
+ *
+ * Objects are loose: the signature covers every field the server sent, so a field this build doesn't know yet must
+ * survive parsing (and storage) for the signature to verify. A strict or stripping schema would make one additive
+ * server change refuse every new policy. Unknown fields are kept but never enforced.
  */
-export const BrowserProtectionPolicy = z.object({
+export const BrowserProtectionPolicy = z.looseObject({
   id: z.string().min(1),
   childId: z.string().min(1),
   installationId: z.string().min(1),
@@ -51,7 +54,7 @@ export const BrowserProtectionPolicy = z.object({
   allowedDomains: z.array(Domain).max(5000),
   unknownSitesPolicy: UnknownSitesPolicy,
   schedule: z
-    .object({
+    .looseObject({
       enabled: z.boolean(),
       /** Protection is tightened (unknown sites blocked) between these times. */
       startTime: HHMM,
@@ -60,7 +63,9 @@ export const BrowserProtectionPolicy = z.object({
     })
     .nullable(),
   /** Parent-approved exceptions (from access requests) until a time. The extension ignores expired ones. */
-  temporaryAllows: z.array(z.object({ domain: Domain, until: z.iso.datetime({ offset: true }) })).max(500),
+  temporaryAllows: z
+    .array(z.looseObject({ domain: Domain, until: z.iso.datetime({ offset: true }) }))
+    .max(500),
   /**
    * Sites on eGuard's lists for the categories this family blocks (only those). Signed with the policy.
    * No defaults or transforms here: the signature is checked over exactly what was parsed.

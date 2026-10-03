@@ -111,6 +111,22 @@ describe("policy sync", () => {
     expect((await h.state.policy.get())?.policy.version).toBe(1);
   });
 
+  it("accepts a signed policy carrying fields this build doesn't know yet, and keeps verifying it", async () => {
+    const newer = {
+      ...policy(2),
+      futureSwitch: true,
+      schedule: { enabled: false, startTime: "21:00", endTime: "06:00", timezone: "Asia/Manila", days: [1] },
+    };
+    const h = await paired([
+      () => ({ status: 200, json: signed(policy(1)) }),
+      () => ({ status: 200, json: signed(newer) }),
+    ]);
+    await h.service.syncPolicy();
+    expect((await h.state.policy.get())?.policy.version).toBe(2);
+    // Read back from storage, the signature still matches (nothing was stripped)
+    expect((await h.service.getStatus()).policyVersion).toBe(2);
+  });
+
   it("keeps the last policy active while offline", async () => {
     const h = await paired([() => ({ status: 200, json: signed(policy(4)) }), () => "network-error"]);
     await h.service.syncPolicy();

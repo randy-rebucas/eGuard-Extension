@@ -26,6 +26,8 @@ import { deriveStatus } from "./status.ts";
 export const REPORT_EVERY_MS = 60 * 60_000;
 /** Daily counts eGuard couldn't take yet are kept this long, then dropped (the server refuses older days). */
 export const KEEP_COUNTS_DAYS = 14;
+/** POST /events accepts each count up to this. */
+const MAX_DAILY_COUNT = 100_000;
 
 /** Counts and switches only: the popup shows what kind of protection is set, never which sites. */
 export function summarize(
@@ -277,7 +279,11 @@ export function createService(d: ServiceDeps) {
     const done = new Set(Object.keys(counts).filter((day) => day < oldest));
     for (const day of Object.keys(counts).sort()) {
       if (day >= today || done.has(day)) continue;
-      const res = await reportEvents(d.tokens, { date: day, blocked: counts[day] ?? {} });
+      // The server refuses a whole day if any count is over its cap, so cap rather than lose the day
+      const blocked = Object.fromEntries(
+        Object.entries(counts[day] ?? {}).map(([k, n]) => [k, Math.min(n, MAX_DAILY_COUNT)]),
+      );
+      const res = await reportEvents(d.tokens, { date: day, blocked });
       if (!res.ok && res.kind !== "rejected") {
         log("counts_not_sent", { kind: res.kind });
         break;
