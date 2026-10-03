@@ -1,8 +1,8 @@
 # eGuard Browser Extension API — v1
 
 The API the eGuard browser extension calls from the child's computer. Parents manage browsers, policies and access
-requests through the [Parent Mobile API](mobile-api.md#part-b-parent-api) (§P4.6 "Browser codes", §P4.12); this page covers only the
-extension's side.
+requests through the Parent Mobile API (`~/eguard` docs, `mobile-api.md` §P4.6 "Browser codes", §P4.12); this page
+covers only the extension's side.
 
 - **Base URL:** `https://www.eguard.family/api/browser/v1`
 - **Format:** JSON in and out, UTF-8. Every response has `Cache-Control: no-store`.
@@ -28,11 +28,11 @@ extension's side.
 
 No parent credential ever reaches the child's browser. The extension holds an **installation**, created by pairing:
 
-| Credential | Lifetime | Use |
-|---|---|---|
-| `installationId` | Until the parent removes the browser | Sent with the refresh token |
-| `accessToken` | **15 minutes** (`accessTokenExpiresAt`) | `Authorization: Bearer <accessToken>` on every call except `/pair` and `/token` |
-| `refreshToken` | Until it is used once | Exchanged at `POST /token` for a new access token **and a new refresh token** |
+| Credential       | Lifetime                                | Use                                                                             |
+| ---------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| `installationId` | Until the parent removes the browser    | Sent with the refresh token                                                     |
+| `accessToken`    | **15 minutes** (`accessTokenExpiresAt`) | `Authorization: Bearer <accessToken>` on every call except `/pair` and `/token` |
+| `refreshToken`   | Until it is used once                   | Exchanged at `POST /token` for a new access token **and a new refresh token**   |
 
 - Keep `installationId` and `refreshToken` in `storage.local`, and the access token in `storage.session` (memory
   only). Never use `storage.sync`: the credentials belong to this browser.
@@ -47,11 +47,11 @@ No parent credential ever reaches the child's browser. The extension holds an **
 
 ### Headers
 
-| Header | When | Value |
-|---|---|---|
-| `Authorization` | every call except `/pair` and `/token` | `Bearer <accessToken>` |
-| `Content-Type` | requests with a body | `application/json` |
-| `X-eGuard-Client` | every call (recommended) | `chrome-extension`, `edge-extension` or `firefox-extension`. Not read by the server yet |
+| Header            | When                                   | Value                                                                                   |
+| ----------------- | -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `Authorization`   | every call except `/pair` and `/token` | `Bearer <accessToken>`                                                                  |
+| `Content-Type`    | requests with a body                   | `application/json`                                                                      |
+| `X-eGuard-Client` | every call (recommended)               | `chrome-extension`, `edge-extension` or `firefox-extension`. Not read by the server yet |
 
 ### Errors
 
@@ -61,15 +61,16 @@ Every error has the same shape. `error` is written for a person and is safe to s
 { "error": "This browser is no longer connected to eGuard.", "code": "unauthorized" }
 ```
 
-| Status | `code` | Meaning / what the extension should do |
-|---|---|---|
-| 400 | `invalid_code`, `wrong_code_kind` | Pairing: the code is wrong, used, expired, replaced, or is a phone-app code |
-| 400 | `invalid_domain`, `invalid_report`, `invalid_date` | The body wasn't accepted. Don't retry the same body |
-| 401 | `unauthorized` | Access token expired, or the browser was removed or disconnected. See [Handling 401](#handling-401) |
-| 409 | `device_limit` | Pairing: the family's plan has no free device slots |
-| 429 | `rate_limited` | Too many requests. Back off and try later |
-| 503 | `signing_not_configured` | The server can't sign policies. Keep enforcing the last verified policy and retry later |
-| 500 | `server_error` | Unexpected. Retry with backoff |
+| Status | `code`                                             | Meaning / what the extension should do                                                              |
+| ------ | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 400    | `invalid_code`, `wrong_code_kind`                  | Pairing: the code is wrong, used, expired, replaced, or is a phone-app code                         |
+| 400    | `invalid_domain`, `invalid_report`, `invalid_date` | The body wasn't accepted. Don't retry the same body                                                 |
+| 401    | `unauthorized`                                     | Access token expired, or the browser was removed or disconnected. See [Handling 401](#handling-401) |
+| 401    | `installation_revoked`, `token_reused`             | `/token` only: the parent removed the browser, or a rotated-out token was reused. Disconnect now    |
+| 409    | `device_limit`                                     | Pairing: the family's plan has no free device slots                                                 |
+| 429    | `rate_limited`                                     | Too many requests. Back off and try later                                                           |
+| 503    | `signing_not_configured`                           | The server can't sign policies. Keep enforcing the last verified policy and retry later             |
+| 500    | `server_error`                                     | Unexpected. Retry with backoff                                                                      |
 
 ### Handling 401
 
@@ -77,9 +78,12 @@ A `401` from any authenticated endpoint means one of two things. Tell them apart
 
 1. Call `POST /token` once (single-flight).
 2. If it succeeds, repeat the original request with the new access token.
-3. If `/token` also returns `401`, the browser is no longer connected: the parent removed it, or eGuard disconnected it
-   because its refresh token was used from two places. Clear the stored credentials and show the setup page, which
-   asks for a new code.
+3. If `/token` also returns `401` with `code` `installation_revoked` (the parent removed it) or `token_reused` (eGuard
+   disconnected it because its refresh token was used from two places), the browser is no longer connected. Clear the
+   stored credentials and show the setup page, which asks for a new code.
+4. A `401` from `/token` with any other code could be a server fault. Keep enforcing the last policy and only treat it
+   as a disconnection if `/token` keeps refusing for 10 minutes: forgetting the connection removes every rule and
+   needs a parent to pair the browser again.
 
 Before a call, you can refresh early when `accessTokenExpiresAt` is less than a minute away; that saves a round trip.
 
@@ -106,16 +110,22 @@ browser" alert for the family. The next check-in resolves it.
 
 **No auth.** Exchanges the one-time code the parent got from "Add a browser" for an installation.
 
-| Field | Type | Rules |
-|---|---|---|
-| `code` | string | 6–12 characters after removing spaces and dashes. Case doesn't matter: `abcd-2345` works |
-| `browser` | string | 1–40 chars, e.g. `Chrome`, `Edge`. Shown to parents as "Chrome on Mia's MacBook" |
-| `browserVersion` | string \| `null` | ≤ 40 chars |
-| `extensionVersion` | string | 1–20 chars, e.g. `0.1.0` |
-| `platform` | string | 1–40 chars, e.g. `mac`, `win`, `cros` (`chrome.runtime.getPlatformInfo().os`) |
+| Field              | Type             | Rules                                                                                    |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------------- |
+| `code`             | string           | 6–12 characters after removing spaces and dashes. Case doesn't matter: `abcd-2345` works |
+| `browser`          | string           | 1–40 chars, e.g. `Chrome`, `Edge`. Shown to parents as "Chrome on Mia's MacBook"         |
+| `browserVersion`   | string \| `null` | ≤ 40 chars                                                                               |
+| `extensionVersion` | string           | 1–20 chars, e.g. `0.1.0`                                                                 |
+| `platform`         | string           | 1–40 chars, e.g. `mac`, `win`, `cros` (`chrome.runtime.getPlatformInfo().os`)            |
 
 ```json
-{ "code": "FJZM-7J7H", "browser": "Chrome", "browserVersion": "153.0.0.0", "extensionVersion": "0.1.0", "platform": "mac" }
+{
+  "code": "FJZM-7J7H",
+  "browser": "Chrome",
+  "browserVersion": "153.0.0.0",
+  "extensionVersion": "0.1.0",
+  "platform": "mac"
+}
 ```
 
 Response `201`:
@@ -153,19 +163,24 @@ Then fetch the policy straight away.
 Response `200`:
 
 ```json
-{ "accessToken": "<43 chars>", "accessTokenExpiresAt": "2026-09-29T06:34:18.000Z", "refreshToken": "<43 chars>" }
+{
+  "accessToken": "<43 chars>",
+  "accessTokenExpiresAt": "2026-09-29T06:34:18.000Z",
+  "refreshToken": "<43 chars>"
+}
 ```
 
 The old refresh token and the old access token stop working.
 
 **Replay detection.** The server remembers the previous refresh token:
 
-| The extension sends | Result |
-|---|---|
-| The current refresh token | Normal rotation |
-| The previous one, **within 2 minutes** of the rotation | Fresh tokens. Covers a lost response: the server rotated, but the extension never saw the reply. The 2 minutes count from the original rotation and aren't extended by retries |
-| The previous one, **after 2 minutes** | Someone copied the token. The installation is **disconnected**, the family gets an `ACTION_REQUIRED` alert "Browser disconnected for security", and the response is `401` |
-| Anything else, or a malformed body | `401` |
+| The extension sends                                    | Result                                                                                                                                                                                 |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The current refresh token                              | Normal rotation                                                                                                                                                                        |
+| The previous one, **within 2 minutes** of the rotation | Fresh tokens. Covers a lost response: the server rotated, but the extension never saw the reply. The 2 minutes count from the original rotation and aren't extended by retries         |
+| The previous one, **after 2 minutes**                  | Someone copied the token. The installation is **disconnected**, the family gets an `ACTION_REQUIRED` alert "Browser disconnected for security", and the response is `401 token_reused` |
+| Any token for a browser the parent removed             | `401 installation_revoked`                                                                                                                                                             |
+| Anything else, or a malformed body                     | `401 unauthorized`                                                                                                                                                                     |
 
 `429 rate_limited` after 30 requests in 15 minutes from one IP address.
 
@@ -184,12 +199,22 @@ Response `200`:
     "version": 4,
     "safeBrowsing": true,
     "safeSearch": true,
-    "blockedCategories": ["ADULT", "DATING", "DRUGS", "GAMBLING", "HATE", "MALWARE", "PHISHING", "VIOLENCE", "WEAPONS"],
+    "blockedCategories": [
+      "ADULT",
+      "DATING",
+      "DRUGS",
+      "GAMBLING",
+      "HATE",
+      "MALWARE",
+      "PHISHING",
+      "VIOLENCE",
+      "WEAPONS"
+    ],
     "blockedDomains": ["example-games.com"],
     "allowedDomains": ["khanacademy.org"],
     "unknownSitesPolicy": "ALLOW",
     "schedule": { "enabled": true, "startTime": "21:00", "endTime": "06:00", "timezone": "Asia/Manila" },
-    "temporaryAllows": [ { "domain": "roblox.com", "until": "2026-09-29T07:15:00.000Z" } ],
+    "temporaryAllows": [{ "domain": "roblox.com", "until": "2026-09-29T07:15:00.000Z" }],
     "categoryDomains": {
       "ADULT": ["pornhub.com", "xvideos.com", "…"],
       "GAMBLING": ["bet365.com", "pokerstars.com", "…"],
@@ -202,46 +227,58 @@ Response `200`:
 }
 ```
 
-| Field | Notes |
-|---|---|
-| `version` | Goes up by one on every change: the parent's edits, approved access requests. Report it in `/health` as `policyVersion` |
-| `safeBrowsing` | Keep the browser's own malware and phishing protection on (Chrome Safe Browsing, Edge SmartScreen). `MALWARE` and `PHISHING` have no domain list; this setting covers them |
-| `safeSearch` | Force SafeSearch on search engines |
-| `blockedCategories` | Category keys (see below), sorted |
-| `blockedDomains` / `allowedDomains` | Up to 500 each, sorted, never overlapping |
-| `unknownSitesPolicy` | Sites on neither list: `ALLOW`, `WARN` (show a notice first) or `BLOCK` (only the allowed list opens) |
-| `schedule?` | Focus hours: while `enabled` and the local time in `timezone` is between `startTime` and `endTime` (`HH:MM`, 24 h; may cross midnight), block everything not on the allowed list. `null` when the parent never set them |
-| `temporaryAllows` | Sites a parent approved for a while (from an access request). The server lists only those still in force when it signs, so **the extension must also drop each one at `until`** |
-| `categoryDomains` | Domain lists for the blocked categories only. Categories without a list are left out |
+| Field                               | Notes                                                                                                                                                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                           | Goes up by one on every change: the parent's edits, approved access requests. Report it in `/health` as `policyVersion`                                                                                                 |
+| `safeBrowsing`                      | Keep the browser's own malware and phishing protection on (Chrome Safe Browsing, Edge SmartScreen). `MALWARE` and `PHISHING` have no domain list; this setting covers them                                              |
+| `safeSearch`                        | Force SafeSearch on search engines                                                                                                                                                                                      |
+| `blockedCategories`                 | Category keys (see below), sorted                                                                                                                                                                                       |
+| `blockedDomains` / `allowedDomains` | Up to 500 each, sorted, never overlapping                                                                                                                                                                               |
+| `unknownSitesPolicy`                | Sites on neither list: `ALLOW`, `WARN` (show a notice first) or `BLOCK` (only the allowed list opens)                                                                                                                   |
+| `schedule?`                         | Focus hours: while `enabled` and the local time in `timezone` is between `startTime` and `endTime` (`HH:MM`, 24 h; may cross midnight), block everything not on the allowed list. `null` when the parent never set them |
+| `temporaryAllows`                   | Sites a parent approved for a while (from an access request). The server lists only those still in force when it signs, so **the extension must also drop each one at `until`**                                         |
+| `categoryDomains`                   | Domain lists for the blocked categories only. Categories without a list are left out                                                                                                                                    |
 
 Category keys: `ADULT`, `GAMBLING`, `MALWARE`, `PHISHING`, `VIOLENCE`, `DRUGS`, `WEAPONS`, `HATE`, `DATING`,
 `SOCIAL_MEDIA`, `GAMING`, `STREAMING`, `SHOPPING`, `DOWNLOADS`. The category lists are **starter lists** of well-known
 sites, not a complete classifier; parents are told so.
 
+**Adding values later.** The extension accepts any category key and `unknownSitesPolicy` matching
+`^[A-Z][A-Z_]{1,31}$`, so a new one doesn't make older builds refuse every policy. Older builds block a new category's
+sites like any other and enforce an unknown `unknownSitesPolicy` as `BLOCK`. Domains must be sent lower-case and
+trimmed: the signature is checked over exactly what was received.
+
 **Verify before applying**, and again every time the policy is read back from storage. If a new policy fails, refuse
-it and keep enforcing the last verified one. If the stored one fails, discard it and download it again. A policy that
-fails is never enforced or shown. Also refuse a policy whose `installationId` isn't yours, or whose `version` is lower
+it and keep enforcing the last verified one. If the stored one fails, discard it and download it again, and keep the
+rules it was enforcing installed meanwhile. A policy that fails is never enforced or shown. Also refuse a policy whose `installationId` isn't yours, or whose `version` is lower
 than the one you already enforce: versions only move forward.
 
 - Algorithm: ECDSA P-256 with SHA-256. `signature` is base64 of the raw `r‖s` form (64 bytes), which is what WebCrypto
   expects.
 - Signed bytes: the UTF-8 **canonical JSON** of `policy`, meaning object keys sorted at every level (arrays keep their
   order) and no whitespace. That is `JSON.stringify` of the object with its keys sorted recursively.
-- Public key: SPKI DER, base64, built into the extension as `VITE_POLICY_PUBLIC_KEY`.
-- `keyId`: the first 16 hex characters of SHA-256 over that SPKI DER. Use it to pick the key during a key rotation.
+- Public key: SPKI DER, base64, built into the extension as `VITE_POLICY_PUBLIC_KEY` (several separated by commas
+  during a key rotation; a policy signed by any of them verifies).
+- `keyId`: the first 16 hex characters of SHA-256 over that SPKI DER, for diagnostics.
 
 ```ts
 function canonical(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(canonical);
   if (v && typeof v === "object") {
-    return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]));
+    return Object.fromEntries(
+      Object.keys(v)
+        .sort()
+        .map((k) => [k, canonical((v as Record<string, unknown>)[k])]),
+    );
   }
   return v;
 }
 
 async function verifyPolicy(res: { policy: object; signature: string }, publicKeyB64: string) {
   const der = Uint8Array.from(atob(publicKeyB64), (c) => c.charCodeAt(0));
-  const key = await crypto.subtle.importKey("spki", der, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+  const key = await crypto.subtle.importKey("spki", der, { name: "ECDSA", namedCurve: "P-256" }, false, [
+    "verify",
+  ]);
   const sig = Uint8Array.from(atob(res.signature), (c) => c.charCodeAt(0));
   const data = new TextEncoder().encode(JSON.stringify(canonical(res.policy)));
   return crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, sig, data);
@@ -258,10 +295,10 @@ When the block page blocks a site, the child can ask a parent to open it.
 
 #### `POST /access-requests`
 
-| Field | Type | Rules |
-|---|---|---|
-| `domain` | string | 1–253 chars. A URL is fine: `https://www.roblox.com/games` is stored as `www.roblox.com` |
-| `reason` | string \| `null`, optional | Up to 280 chars, shown to the parent |
+| Field    | Type                       | Rules                                                                                    |
+| -------- | -------------------------- | ---------------------------------------------------------------------------------------- |
+| `domain` | string                     | 1–253 chars. A URL is fine: `https://www.roblox.com/games` is stored as `www.roblox.com` |
+| `reason` | string \| `null`, optional | Up to 280 chars, shown to the parent                                                     |
 
 Response: `{ "request": Request }`. The status is `201` for a new request, or `200` when the child already has an
 open request for that site (from any of their browsers); that request is returned unchanged.
@@ -291,12 +328,12 @@ open request for that site (from any of their browsers); that request is returne
 This browser's 20 most recent requests, newest first: `{ "requests": [ Request ] }`. The block page uses this to show
 "Waiting for a parent", "Approved" or "Declined".
 
-| Field | Notes |
-|---|---|
-| `status` | `PENDING`, `APPROVED` or `DENIED` |
-| `duration?` | On approval: `15M`, `1H`, `TODAY` (until midnight in the family's time zone) or `ALWAYS` |
-| `expiresAt?` | When a timed approval ends. `null` for `ALWAYS` and for denials |
-| `decidedBy?` | The parent's name |
+| Field        | Notes                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| `status`     | `PENDING`, `APPROVED` or `DENIED`                                                        |
+| `duration?`  | On approval: `15M`, `1H`, `TODAY` (until midnight in the family's time zone) or `ALWAYS` |
+| `expiresAt?` | When a timed approval ends. `null` for `ALWAYS` and for denials                          |
+| `decidedBy?` | The parent's name                                                                        |
 
 **An approval is not permission by itself.** It becomes a new policy version: timed approvals appear in
 `temporaryAllows`, and `ALWAYS` moves the site to `allowedDomains` (and off `blockedDomains`). Unblock the site only
@@ -308,22 +345,23 @@ the next poll; that is what the block page's "Check again" button should do.
 The extension's own checks and the policy version it enforces. Send it after pairing, whenever the result changes
 (checked every 5 minutes), at least once an hour, and when someone presses **Run health check**.
 
-| Field | Type | Rules |
-|---|---|---|
-| `state` | enum | `PROTECTED`, `NEEDS_ATTENTION`, `ACTION_REQUIRED`, `SYNC_PAUSED`, `UNSUPPORTED` |
-| `policyVersion` | int \| `null` | The version the extension is enforcing. `null` before the first verified policy |
-| `checks` | array, up to 20 | `{ id, status }` |
+| Field           | Type            | Rules                                                                           |
+| --------------- | --------------- | ------------------------------------------------------------------------------- |
+| `state`         | enum            | `PROTECTED`, `NEEDS_ATTENTION`, `ACTION_REQUIRED`, `SYNC_PAUSED`, `UNSUPPORTED` |
+| `policyVersion` | int \| `null`   | The version the extension is enforcing. `null` before the first verified policy |
+| `checks`        | array, up to 20 | `{ id, status }`                                                                |
 
 Check statuses: `PASS`, `WARNING`, `ACTION_REQUIRED`, `UNSUPPORTED`, `NOT_CONFIGURED`.
 
-| Check `id` | `PASS` when | Otherwise | Alert for the family |
-|---|---|---|---|
-| `policy_signature` | A stored policy verifies | `ACTION_REQUIRED`: none yet, or the stored one was discarded | none |
-| `rules_installed` | The browser's rules read back exactly | `ACTION_REQUIRED`; `NOT_CONFIGURED` before the first policy | `WARNING` / `ACTION_REQUIRED` → "Browser protection changed" |
-| `private_windows` | Allowed in private windows | `WARNING` (not allowed); `UNSUPPORTED` if the browser can't say | `WARNING` / `ACTION_REQUIRED` → "Private windows aren't protected". `PASS` resolves it |
-| `sync_fresh` | Synced in the last day and eGuard reachable | `WARNING` | none |
-| `safe_browsing` | Chrome's Safe Browsing is on | `ACTION_REQUIRED` (off, and held by something else); `NOT_CONFIGURED` (the family turned it off); `UNSUPPORTED` in Edge and Firefox | `ACTION_REQUIRED` → "Malware and phishing protection is off". Any other status resolves it |
-| `force_installed` | `management.getSelf().installType` is `admin` | `NOT_CONFIGURED` (the child can remove it); `UNSUPPORTED` if unknown | none |
+| Check `id`         | `PASS` when                                   | Otherwise                                                                                                                           | Alert for the family                                                                       |
+| ------------------ | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `policy_signature` | A stored policy verifies                      | `ACTION_REQUIRED`: none yet, or the stored one was discarded                                                                        | none                                                                                       |
+| `rules_installed`  | The browser's rules read back exactly         | `ACTION_REQUIRED`; `NOT_CONFIGURED` before the first policy                                                                         | `WARNING` / `ACTION_REQUIRED` → "Browser protection changed"                               |
+| `private_windows`  | Allowed in private windows                    | `WARNING` (not allowed); `UNSUPPORTED` if the browser can't say                                                                     | `WARNING` / `ACTION_REQUIRED` → "Private windows aren't protected". `PASS` resolves it     |
+| `site_access`      | Every host permission is still granted        | `ACTION_REQUIRED` (withdrawn in the browser's settings: SafeSearch and sync stop); `UNSUPPORTED` if unknown                         | none yet (the server drops this id until it knows it)                                      |
+| `sync_fresh`       | Synced in the last day and eGuard reachable   | `WARNING`                                                                                                                           | none                                                                                       |
+| `safe_browsing`    | Chrome's Safe Browsing is on                  | `ACTION_REQUIRED` (off, and held by something else); `NOT_CONFIGURED` (the family turned it off); `UNSUPPORTED` in Edge and Firefox | `ACTION_REQUIRED` → "Malware and phishing protection is off". Any other status resolves it |
+| `force_installed`  | `management.getSelf().installType` is `admin` | `NOT_CONFIGURED` (the child can remove it); `UNSUPPORTED` if unknown                                                                | none                                                                                       |
 
 - Unknown ids are dropped, not refused, so a newer extension can send checks this server doesn't know yet. If an id
   appears twice, the first one counts.
@@ -340,6 +378,7 @@ Check statuses: `PASS`, `WARNING`, `ACTION_REQUIRED`, `UNSUPPORTED`, `NOT_CONFIG
     { "id": "policy_signature", "status": "PASS" },
     { "id": "rules_installed", "status": "PASS" },
     { "id": "private_windows", "status": "WARNING" },
+    { "id": "site_access", "status": "PASS" },
     { "id": "sync_fresh", "status": "PASS" },
     { "id": "safe_browsing", "status": "PASS" },
     { "id": "force_installed", "status": "UNSUPPORTED" }
@@ -355,10 +394,10 @@ Response: `{ "ok": true, "score": 4, "total": 5 }`. `UNSUPPORTED` and `NOT_CONFI
 How many pages were blocked on one day, per reason. **Counts only**: never send a site, a URL or a time finer than a
 day.
 
-| Field | Type | Rules |
-|---|---|---|
-| `date` | `YYYY-MM-DD` | A day in the family's time zone, from 14 days ago to 1 day ahead |
-| `blocked` | object | Up to 24 keys, each `^[A-Z][A-Z_]{1,31}$`: a category key, or a reason (`BLOCKED_SITE`, `UNKNOWN_SITE`, `FOCUS_HOURS`). Each value is an int 0–100,000 |
+| Field     | Type         | Rules                                                                                                                                                                 |
+| --------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `date`    | `YYYY-MM-DD` | A day in the family's time zone, from 14 days ago to 1 day ahead                                                                                                      |
+| `blocked` | object       | Up to 24 keys, each `^[A-Z][A-Z_]{1,31}$`: a category key, or a reason (`BLOCKED_SITE`, `UNKNOWN_SITE`, `FOCUS_HOURS`, `SAFE_SEARCH`). Each value is an int 0–100,000 |
 
 ```json
 { "date": "2026-09-28", "blocked": { "GAMING": 3, "ADULT": 1, "BLOCKED_SITE": 2 } }
@@ -395,7 +434,7 @@ Re-apply the rules every minute from the stored policy, whether or not a sync su
 `temporaryAllows` run out.
 
 **Offline.** A policy never expires on the device, so protection doesn't switch off because the network did. After
-24 hours without a successful sync, the popup shows *Sync paused* (the policy stays active) and the parent sees "eGuard
+24 hours without a successful sync, the popup shows _Sync paused_ (the policy stays active) and the parent sees "eGuard
 can't verify this browser".
 
 ### Asking for a site
@@ -409,7 +448,7 @@ can't verify this browser".
 ### Disconnection
 
 When the parent removes the browser, or eGuard disconnects it after a replayed refresh token, both the access token
-and `POST /token` return `401`. Forget the connection: clear the credentials and stored policy, remove the blocking
+and `POST /token` return `401`, and `/token` says why (`installation_revoked`, `token_reused`). Forget the connection: clear the credentials and stored policy, remove the blocking
 rules, stop reporting, and show the setup page. Revocation is the only thing that removes a policy; the extension
 itself has no "disconnect" button.
 
@@ -417,15 +456,15 @@ itself has no "disconnect" button.
 
 ## 4. What parents see
 
-| The extension… | Parents get |
-|---|---|
-| pairs | INFO alert "Browser connected" |
+| The extension…                                                         | Parents get                                                                            |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| pairs                                                                  | INFO alert "Browser connected"                                                         |
 | sends a refresh token that was rotated out more than 2 minutes earlier | ACTION_REQUIRED "Browser disconnected for security". The browser has to be added again |
-| is silent for 24 hours | "eGuard can't verify this browser" (resolved by the next check-in) |
-| reports an old `policyVersion` or broken rules | "Browser protection changed" |
-| reports `private_windows` failing | "Private windows aren't protected" |
-| reports `safe_browsing` `ACTION_REQUIRED` | "Malware and phishing protection is off" |
-| sends an access request | "Website access request", with Approve / Decline |
+| is silent for 24 hours                                                 | "eGuard can't verify this browser" (resolved by the next check-in)                     |
+| reports an old `policyVersion` or broken rules                         | "Browser protection changed"                                                           |
+| reports `private_windows` failing                                      | "Private windows aren't protected"                                                     |
+| reports `safe_browsing` `ACTION_REQUIRED`                              | "Malware and phishing protection is off"                                               |
+| sends an access request                                                | "Website access request", with Approve / Decline                                       |
 
 Connected browsers count toward the plan's device limit, the same as phones.
 
@@ -442,5 +481,6 @@ node scripts/browser-policy-keys.mjs
 - `BROWSER_POLICY_SIGNING_KEY` (private, base64 PKCS#8 DER) goes in the server's environment. Without it,
   `GET /policy` returns `503 signing_not_configured`.
 - `VITE_POLICY_PUBLIC_KEY` (public, base64 SPKI DER) goes in the extension build's `eguard-browser/.env`.
-- To rotate the key, ship an extension update that trusts the new public key **before** switching the server; use
-  `keyId` to tell the keys apart.
+- To rotate the key: ship an extension release whose `VITE_POLICY_PUBLIC_KEY` lists the old **and** new public keys
+  (comma-separated); once it's installed widely, switch the server to the new private key; drop the old public key in
+  a later release. Never ship a build that trusts only the new key while the server still signs with the old one.

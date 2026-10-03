@@ -46,6 +46,18 @@ export async function installType(api: ExtensionApi): Promise<string | null> {
   return (await management.getSelf()).installType ?? null;
 }
 
+/**
+ * Whether every host permission in the manifest is still granted. People can withdraw them (Chrome/Edge "Site
+ * access", Firefox's add-on Permissions tab); permissions.contains needs no permission. null where unavailable.
+ */
+export async function hostAccess(api: ExtensionApi): Promise<boolean | null> {
+  const permissions = (api as { permissions?: { contains?: (p: { origins: string[] }) => Promise<boolean> } })
+    .permissions;
+  const origins = (api.runtime.getManifest() as { host_permissions?: string[] }).host_permissions ?? [];
+  if (!permissions?.contains || !origins.length) return null;
+  return permissions.contains({ origins });
+}
+
 /** storage.session (memory-only) exists from Chrome 102 and Firefox 115; the types claim it always does. */
 export function sessionArea(api: ExtensionApi): chrome.storage.StorageArea | undefined {
   return (api.storage as { session?: chrome.storage.StorageArea }).session;

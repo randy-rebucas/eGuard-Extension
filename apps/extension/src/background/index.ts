@@ -8,12 +8,13 @@ import {
   detectCurrentBrowser,
   extensionOrigin,
   getExtensionApi,
+  hostAccess,
   installType,
   memoryArea,
   safeBrowsingSetting,
   sessionArea,
 } from "@eguard/browser-adapter";
-import { importPolicyKey, verifyPolicySignature, type DnrRule } from "@eguard/policy-engine";
+import { importPolicyKeys, verifyWithAnyKey, type DnrRule } from "@eguard/policy-engine";
 import type { ProtectionStatus } from "@eguard/schemas";
 import { config } from "../config/runtime.ts";
 import { log } from "./diagnostics.ts";
@@ -51,11 +52,11 @@ const tokens = createTokenManager({
   },
 });
 
-// The key that signs family policies, built in. If it can't be imported, no policy verifies: fail closed.
-const policyKey = importPolicyKey(config.policyPublicKey).catch((err: unknown) => {
-  log("policy_key_invalid", { error: String(err) });
-  return null;
-});
+// The keys that sign family policies, built in (two during a key rotation). A key that can't be imported verifies
+// nothing; with none, no new policy is accepted, and the rules already installed stay (service.enforce).
+const policyKeys = importPolicyKeys(config.policyPublicKey, (index, err) =>
+  log("policy_key_invalid", { index, error: String(err) }),
+);
 
 /** declarativeNetRequest behind the narrow interface enforcement.ts uses. */
 const dnr = api.declarativeNetRequest;
@@ -126,10 +127,7 @@ const service = createService({
   },
   webAppUrl: config.webAppUrl,
   onboardingUrl: api.runtime.getURL("onboarding/index.html"),
-  verifyPolicy: async (policy, signature) => {
-    const key = await policyKey;
-    return key ? verifyPolicySignature(key, policy, signature) : false;
-  },
+  verifyPolicy: async (policy, signature) => verifyWithAnyKey(await policyKeys, policy, signature),
   enforcement,
   privateWindowsAllowed: () => api.extension.isAllowedIncognitoAccess(),
   openBlockPage: async (tabId, url) => {
@@ -137,6 +135,7 @@ const service = createService({
   },
   safeBrowsing,
   installType: () => installType(api),
+  hostAccess: () => hostAccess(api),
   log,
   onStatus: (s) => updateBadge(s).catch((err: unknown) => log("badge_failed", { error: String(err) })),
 });
@@ -159,6 +158,18 @@ api.webNavigation.onErrorOccurred.addListener((details) => {
     .onNavigationError(details.tabId, details.url)
     .catch((err: unknown) => log("block_page_failed", { error: String(err) }));
 });
+
+/**
+ * Site access withdrawn (or given back) in the browser's extension settings: check again now, not at the next
+ * alarm, so the badge changes and the report goes out (if eGuard can still be reached).
+ */
+const onPermissionsChanged = () => {
+  void service
+    .reportHealth()
+    .catch((err: unknown) => log("permissions_check_failed", { error: String(err) }));
+};
+api.permissions.onRemoved.addListener(onPermissionsChanged);
+api.permissions.onAdded.addListener(onPermissionsChanged);
 
 async function ensureAlarms() {
   if (!(await api.alarms.get(SYNC_ALARM))) {

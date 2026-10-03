@@ -52,9 +52,12 @@ describe("PairingCode", () => {
 });
 
 describe("Domain", () => {
-  it("accepts host names and lower-cases them", () => {
-    expect(Domain.parse("WWW.Example.COM")).toBe("www.example.com");
+  it("accepts normalised host names exactly as sent (the signature covers them)", () => {
     expect(Domain.parse("sub-domain.example.co.uk")).toBe("sub-domain.example.co.uk");
+    expect(Domain.parse("xn--bcher-kva.example")).toBe("xn--bcher-kva.example");
+    // Not normalised quietly: a changed value would fail the signature check, so it's refused outright
+    expect(Domain.safeParse("WWW.Example.COM").success).toBe(false);
+    expect(Domain.safeParse(" example.com").success).toBe(false);
   });
   it("rejects URLs, ports, wildcards and single labels", () => {
     for (const bad of [
@@ -91,9 +94,22 @@ describe("BrowserProtectionPolicy", () => {
   it("accepts a well-formed policy", () => {
     expect(BrowserProtectionPolicy.safeParse(valid).success).toBe(true);
   });
+  it("accepts categories and modes added on the server after this build (they're enforced strictly)", () => {
+    const newer = {
+      ...valid,
+      blockedCategories: ["ADULT", "AI_CHAT"],
+      categoryDomains: { AI_CHAT: ["chat.example"] },
+      unknownSitesPolicy: "ASK_FIRST",
+    };
+    expect(BrowserProtectionPolicy.parse(newer)).toEqual(newer);
+  });
   it("rejects malformed policies", () => {
     expect(BrowserProtectionPolicy.safeParse({ ...valid, version: 0 }).success).toBe(false);
-    expect(BrowserProtectionPolicy.safeParse({ ...valid, blockedCategories: ["NOPE"] }).success).toBe(false);
+    expect(BrowserProtectionPolicy.safeParse({ ...valid, blockedCategories: ["nope"] }).success).toBe(false);
+    expect(BrowserProtectionPolicy.safeParse({ ...valid, unknownSitesPolicy: "" }).success).toBe(false);
+    expect(BrowserProtectionPolicy.safeParse({ ...valid, categoryDomains: { "bad key": [] } }).success).toBe(
+      false,
+    );
     expect(BrowserProtectionPolicy.safeParse({ ...valid, blockedDomains: ["not a domain"] }).success).toBe(
       false,
     );

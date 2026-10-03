@@ -25,6 +25,7 @@ export type Harness = {
   /** Chrome's Safe Browsing setting as the fake privacy API holds it (null: the browser has no such API). */
   safeBrowsing: { value: boolean; level: SafeBrowsingLevel } | null;
   setInstallType: (t: string | null) => void;
+  setHostAccess: (granted: boolean | null) => void;
   log: Mock<(event: string, detail?: Record<string, unknown>) => void>;
 };
 
@@ -104,6 +105,7 @@ export function harness(
   };
   let privateWindows: boolean | null = true;
   let install: string | null = "normal";
+  let hostAccess: boolean | null = true;
   // Only Chrome's row in the capability matrix holds Safe Browsing (index.ts decides the same way)
   const sb: Harness["safeBrowsing"] =
     browser.family === "chrome" ? { value: true, level: "controllable_by_this_extension" } : null;
@@ -135,6 +137,7 @@ export function harness(
         }
       : null,
     installType: async () => install,
+    hostAccess: async () => hostAccess,
     now: () => NOW,
     log,
   });
@@ -151,5 +154,6 @@ export function harness(
     setPrivateWindows: (allowed) => void (privateWindows = allowed),
     safeBrowsing: sb,
     setInstallType: (t) => void (install = t),
+    setHostAccess: (granted) => void (hostAccess = granted),
   };
 }

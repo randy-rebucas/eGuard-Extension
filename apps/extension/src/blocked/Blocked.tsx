@@ -55,6 +55,11 @@ function explain(info: BlockInfo): { title: string; body: string } {
         title: "This website isn't on your list",
         body: "Only websites your family has chosen open in this browser.",
       };
+    case "SAFE_SEARCH":
+      return {
+        title: "Search on google.com instead",
+        body: "Your family uses SafeSearch, which eGuard can only turn on at google.com. Search there and it works as usual.",
+      };
     default:
       return {
         title: "This website is blocked",
@@ -215,80 +220,83 @@ export function Blocked() {
         ) : null}
       </div>
 
-      <section className="mt-8 border-t border-line pt-6 text-left" aria-labelledby="need-access">
-        <h2 id="need-access" className="text-sm font-semibold">
-          Need this website?
-        </h2>
-        {request?.status === "PENDING" ? (
-          <div role="status" className="mt-2">
-            <p className="flex items-center gap-2 text-sm text-ink-2">
-              <Send className="size-4 text-accent-ink" aria-hidden="true" /> You asked a parent. It opens here
-              once they say yes.
-            </p>
-            {checkedNoChange ? <p className="mt-1 text-sm text-ink-3">No answer yet.</p> : null}
-            <Button
-              variant="ghost"
-              className="mt-2 -ml-3"
-              busy={busy === "check"}
-              onClick={() => void run("check")}
-            >
-              Check again
-            </Button>
-          </div>
-        ) : asking ? (
-          <form
-            className="mt-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void run("request");
-            }}
-          >
-            <label htmlFor={reasonId} className="text-sm text-ink-2">
-              Why do you need it? <span className="text-ink-3">(optional)</span>
-            </label>
-            <textarea
-              id={reasonId}
-              // Opened by the child pressing "Ask a parent", so moving focus here is expected
-              autoFocus
-              value={reason}
-              maxLength={280}
-              onChange={(e) => setReason(e.target.value)}
-              className="mt-2 h-24 w-full resize-none rounded-[12px] border border-line-strong bg-surface px-3 py-2 text-sm outline-none focus:border-accent focus:ring-4 focus:ring-accent-soft"
-              placeholder="For example: a school project"
-            />
-            <div className="mt-3 flex gap-3">
-              <Button type="submit" busy={busy === "request"}>
-                Send to a parent
-              </Button>
-              <Button variant="ghost" onClick={() => setAsking(false)}>
-                Cancel
+      {/* A parent's approval can't lift a SafeSearch block (it isn't about the site), so don't offer to ask */}
+      {info.reason?.type === "SAFE_SEARCH" ? null : (
+        <section className="mt-8 border-t border-line pt-6 text-left" aria-labelledby="need-access">
+          <h2 id="need-access" className="text-sm font-semibold">
+            Need this website?
+          </h2>
+          {request?.status === "PENDING" ? (
+            <div role="status" className="mt-2">
+              <p className="flex items-center gap-2 text-sm text-ink-2">
+                <Send className="size-4 text-accent-ink" aria-hidden="true" /> You asked a parent. It opens
+                here once they say yes.
+              </p>
+              {checkedNoChange ? <p className="mt-1 text-sm text-ink-3">No answer yet.</p> : null}
+              <Button
+                variant="ghost"
+                className="mt-2 -ml-3"
+                busy={busy === "check"}
+                onClick={() => void run("check")}
+              >
+                Check again
               </Button>
             </div>
-          </form>
-        ) : (
-          <div className="mt-2">
-            {request?.status === "DENIED" ? (
-              <p className="text-sm text-ink-2">
-                A parent said no to this website last time. You can ask again.
-              </p>
-            ) : request?.status === "APPROVED" ? (
-              <p className="text-sm text-ink-2">The time a parent allowed for this website has ended.</p>
-            ) : (
-              <p className="text-sm text-ink-2">
-                {info.childName ? `${info.childName}, you` : "You"} can ask a parent to allow it.
-              </p>
-            )}
-            <Button variant="secondary" className="mt-3" onClick={() => setAsking(true)}>
-              Ask a parent
-            </Button>
-          </div>
-        )}
-        {error ? (
-          <p role="alert" className="mt-3 text-sm text-crit-ink">
-            {error}
-          </p>
-        ) : null}
-      </section>
+          ) : asking ? (
+            <form
+              className="mt-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run("request");
+              }}
+            >
+              <label htmlFor={reasonId} className="text-sm text-ink-2">
+                Why do you need it? <span className="text-ink-3">(optional)</span>
+              </label>
+              <textarea
+                id={reasonId}
+                // Opened by the child pressing "Ask a parent", so moving focus here is expected
+                autoFocus
+                value={reason}
+                maxLength={280}
+                onChange={(e) => setReason(e.target.value)}
+                className="mt-2 h-24 w-full resize-none rounded-[12px] border border-line-strong bg-surface px-3 py-2 text-sm outline-none focus:border-accent focus:ring-4 focus:ring-accent-soft"
+                placeholder="For example: a school project"
+              />
+              <div className="mt-3 flex gap-3">
+                <Button type="submit" busy={busy === "request"}>
+                  Send to a parent
+                </Button>
+                <Button variant="ghost" onClick={() => setAsking(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div className="mt-2">
+              {request?.status === "DENIED" ? (
+                <p className="text-sm text-ink-2">
+                  A parent said no to this website last time. You can ask again.
+                </p>
+              ) : request?.status === "APPROVED" ? (
+                <p className="text-sm text-ink-2">The time a parent allowed for this website has ended.</p>
+              ) : (
+                <p className="text-sm text-ink-2">
+                  {info.childName ? `${info.childName}, you` : "You"} can ask a parent to allow it.
+                </p>
+              )}
+              <Button variant="secondary" className="mt-3" onClick={() => setAsking(true)}>
+                Ask a parent
+              </Button>
+            </div>
+          )}
+          {error ? (
+            <p role="alert" className="mt-3 text-sm text-crit-ink">
+              {error}
+            </p>
+          ) : null}
+        </section>
+      )}
     </Shell>
   );
 }
@@ -304,6 +312,8 @@ function reasonLabel(info: BlockInfo): string {
       return "Focus time";
     case "UNKNOWN_SITE":
       return "Not on your list";
+    case "SAFE_SEARCH":
+      return "SafeSearch";
     default:
       return "Family setting";
   }

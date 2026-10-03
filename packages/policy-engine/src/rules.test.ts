@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import type { BrowserProtectionPolicy } from "@eguard/schemas";
 import {
   PRIORITY,
+  SAFE_SEARCH_ENGINES,
   categoryIndex,
   compileRules,
   evaluateUrl,
   domainCovers,
   httpHost,
+  listPriority,
   ruleFingerprint,
   sameRules,
+  unsupportedSearch,
   type DnrRule,
 } from "./index.ts";
 
@@ -43,11 +46,14 @@ function browserDecision(rules: DnrRule[], url: string): "ALLOW" | "BLOCK" | "RE
   const host = httpHost(url);
   const rank = { allow: 3, block: 2, redirect: 1 } as const;
   const matches = rules.filter((r) => {
-    if (!r.condition.resourceTypes.includes("main_frame") || !host) return false;
-    if (r.condition.requestDomains) return r.condition.requestDomains.some((d) => domainCovers(d, host));
-    if (r.condition.urlFilter === "|http") return /^https?:/.test(url);
-    if (r.condition.regexFilter) return new RegExp(r.condition.regexFilter).test(url);
-    return false;
+    const c = r.condition;
+    if (!c.resourceTypes.includes("main_frame") || !host) return false;
+    if (c.excludedRequestDomains?.some((d) => domainCovers(d, host))) return false;
+    if (c.requestDomains && !c.requestDomains.some((d) => domainCovers(d, host))) return false;
+    if (c.urlFilter !== undefined && !(c.urlFilter === "|http" && /^https?:/.test(url))) return false;
+    // Browsers match regexFilter case-insensitively unless told otherwise
+    if (c.regexFilter !== undefined && !new RegExp(c.regexFilter, "i").test(url)) return false;
+    return true;
   });
   if (!matches.length) return "ALLOW";
   const top = matches.sort(
@@ -60,15 +66,26 @@ describe("compileRules", () => {
   it("blocks sites and only the categories the family chose, with allowed sites on top", () => {
     const rules = compileRules(policy(), { now: NOW, alwaysAllow: ["www.eguard.family"] });
     const byPriority = (p: number) => rules.filter((r) => r.priority === p);
-    expect(byPriority(PRIORITY.allow)[0]?.condition.requestDomains).toEqual([
+    expect(byPriority(PRIORITY.allow)[0]?.condition.requestDomains).toEqual(["www.eguard.family"]);
+    // The parent's lists rank by specificity, every one above the categories and below approvals
+    expect(byPriority(listPriority("school.example", "allow"))[0]).toMatchObject({
+      action: { type: "allow" },
+      condition: { requestDomains: ["school.example"] },
+    });
+    expect(byPriority(listPriority("games.school.example", "allow"))[0]?.condition.requestDomains).toEqual([
       "games.school.example",
-      "school.example",
-      "www.eguard.family",
     ]);
-    expect(byPriority(PRIORITY.site)[0]?.condition.requestDomains).toEqual([
-      "blocked.example",
+    expect(byPriority(listPriority("blocked.example", "block"))[0]).toMatchObject({
+      action: { type: "block" },
+      condition: { requestDomains: ["blocked.example"] },
+    });
+    expect(byPriority(listPriority("google.com.ph", "block"))[0]?.condition.requestDomains).toEqual([
       "google.com.ph",
     ]);
+    for (const r of rules.filter((r) => r.priority !== PRIORITY.allow && r.condition.requestDomains)) {
+      expect(r.priority).toBeLessThan(PRIORITY.allow);
+      expect(r.priority).toBeGreaterThanOrEqual(PRIORITY.category);
+    }
     expect(byPriority(PRIORITY.category).map((r) => r.condition.requestDomains)).toEqual([
       ["play.example", "roblox.com"],
       ["facebook.com"],
@@ -101,8 +118,27 @@ describe("compileRules", () => {
     // Allowed-only mode: only engines on the allowed list get SafeSearch (and open)
     expect(engines(policy({ unknownSitesPolicy: "BLOCK" }))).toHaveLength(0);
     expect(engines(policy({ unknownSitesPolicy: "BLOCK", allowedDomains: ["bing.com"] }))).toEqual([
-      "^https?://(www\\.)?bing\\.com/search\\?",
+      SAFE_SEARCH_ENGINES.find((e) => e.host === "www.bing.com")!.regexFilter,
     ]);
+  });
+
+  it("covers each engine's other search pages, and blocks Google searches it can't make safe", () => {
+    const rules = compileRules(policy({ blockedDomains: [] }), { now: NOW });
+    const redirects = (url: string) => browserDecision(rules, url) === "REDIRECT";
+    expect(redirects("https://www.google.com/search?q=x")).toBe(true);
+    expect(redirects("https://www.bing.com/images/search?q=x")).toBe(true);
+    expect(redirects("https://www.bing.com/videos/search?q=x")).toBe(true);
+    expect(redirects("https://html.duckduckgo.com/html/?q=x")).toBe(true);
+    expect(redirects("https://lite.duckduckgo.com/lite/?q=x")).toBe(true);
+    expect(browserDecision(rules, "https://www.google.co.uk/search?q=x")).toBe("BLOCK");
+    expect(browserDecision(rules, "https://www.google.de/search?q=x")).toBe("BLOCK");
+    expect(browserDecision(rules, "https://www.google.co.uk/maps")).toBe("ALLOW");
+    expect(browserDecision(rules, "https://www.google.com.ph/search?q=x")).toBe("REDIRECT");
+    expect(unsupportedSearch("https://www.google.co.uk/search?q=x")).toBe(true);
+    expect(unsupportedSearch("https://www.google.com/search?q=x")).toBe(false);
+    expect(compileRules(policy({ safeSearch: false }), { now: NOW }).some((r) => r.priority === 110)).toBe(
+      false,
+    );
   });
 
   it("drops expired approvals", () => {
@@ -129,6 +165,19 @@ describe("compileRules", () => {
         unknownSitesPolicy: "BLOCK",
       }),
       policy({ blockedDomains: ["school.example"], allowedDomains: ["games.school.example"] }),
+      // Allowed school.example, blocked games.school.example inside it, allowed again one level deeper
+      policy({
+        allowedDomains: ["school.example", "ok.games.school.example"],
+        blockedDomains: ["games.school.example"],
+      }),
+      policy({
+        allowedDomains: ["school.example"],
+        blockedDomains: ["games.school.example"],
+        unknownSitesPolicy: "BLOCK",
+        temporaryAllows: [{ domain: "games.school.example", until: "2026-09-29T05:00:00Z" }],
+      }),
+      policy({ unknownSitesPolicy: "SOMETHING_NEW" }),
+      policy({ safeSearch: false }),
     ];
     const urls = [
       "https://school.example/",
@@ -145,6 +194,10 @@ describe("compileRules", () => {
       "https://www.bing.com/",
       "https://www.google.com.ph/",
       "https://duckduckgo.com/",
+      "https://ok.games.school.example/",
+      "https://x.games.school.example/",
+      "https://www.google.co.uk/search?q=x",
+      "https://www.google.com/search?q=x",
     ];
     for (const p of policies) {
       const rules = compileRules(p, { now: NOW });

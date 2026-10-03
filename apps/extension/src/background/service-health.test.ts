@@ -38,13 +38,14 @@ describe("health reports", () => {
         { id: "policy_signature", status: "PASS" },
         { id: "rules_installed", status: "PASS" },
         { id: "private_windows", status: "PASS" },
+        { id: "site_access", status: "PASS" },
         { id: "sync_fresh", status: "PASS" },
         { id: "safe_browsing", status: "PASS" },
         { id: "force_installed", status: "NOT_CONFIGURED" },
       ],
     });
     const s = await h.service.getStatus();
-    expect(s.checks).toHaveLength(6);
+    expect(s.checks).toHaveLength(7);
     expect(s.lastHealthCheckAt).toBe(new Date(NOW).toISOString());
   });
 
@@ -85,7 +86,7 @@ describe("health reports", () => {
   it("a report refused because the browser was removed forgets the connection", async () => {
     const h = await paired({
       [HEALTH]: [accepted, () => ({ status: 401, json: { error: "gone" } })],
-      "/api/browser/v1/token": () => ({ status: 401, json: { error: "gone" } }),
+      "/api/browser/v1/token": () => ({ status: 401, json: { error: "gone", code: "installation_revoked" } }),
     });
     await h.service.runHealthCheck();
     expect(await h.state.installation.get()).toBeNull();

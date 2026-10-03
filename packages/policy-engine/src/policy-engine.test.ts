@@ -7,10 +7,13 @@ import {
   evaluateUrl,
   httpHost,
   importPolicyKey,
+  importPolicyKeys,
   isScheduleActive,
   matchDomain,
   minutesInZone,
+  otherSitesDecision,
   verifyPolicySignature,
+  verifyWithAnyKey,
 } from "./index.ts";
 
 /** Same vector as ~/eguard/tests/api/browser-policy.test.ts: the signer and verifier must agree byte for byte. */
@@ -79,6 +82,25 @@ describe("policy signatures", () => {
     expect(await verifyPolicySignature(key, p, "not base64!")).toBe(false);
     expect(await verifyPolicySignature(key, p, btoa("x".repeat(64)))).toBe(false);
   });
+
+  it("trusts every built-in key during a rotation, and only those", async () => {
+    const [oldKey, newKey] = [keys(), keys()];
+    const trusted = await importPolicyKeys(`${oldKey.spki}, ${newKey.spki}`);
+    expect(trusted).toHaveLength(2);
+    const p = policy();
+    expect(await verifyWithAnyKey(trusted, p, oldKey.signFor(p))).toBe(true);
+    expect(await verifyWithAnyKey(trusted, p, newKey.signFor(p))).toBe(true);
+    expect(await verifyWithAnyKey(trusted, p, keys().signFor(p))).toBe(false);
+    expect(await verifyWithAnyKey([], p, oldKey.signFor(p))).toBe(false);
+  });
+
+  it("skips a key that can't be imported, and says which", async () => {
+    const k = keys();
+    const bad: number[] = [];
+    const trusted = await importPolicyKeys(`${btoa("not a key".repeat(10))},${k.spki}`, (i) => bad.push(i));
+    expect(trusted).toHaveLength(1);
+    expect(bad).toEqual([0]);
+  });
 });
 
 describe("domains", () => {
@@ -146,13 +168,38 @@ describe("evaluateUrl", () => {
     expect(evaluateUrl(policy(), "chrome://extensions", { now }).decision).toBe("ALLOW");
   });
 
-  it("allowed sites win, even inside a blocked site or category", () => {
+  it("allowed sites win inside a blocked site or category", () => {
     const p = policy({ blockedDomains: ["school.example"], allowedDomains: ["games.school.example"] });
     expect(evaluateUrl(p, "https://games.school.example/", { now })).toMatchObject({
       decision: "ALLOW",
       reason: { type: "ALLOWED_SITE" },
     });
     expect(evaluateUrl(p, "https://school.example/", { now }).decision).toBe("BLOCK");
+  });
+
+  it("a blocked site inside an allowed one stays blocked (the more specific rule wins)", () => {
+    const p = policy({ allowedDomains: ["school.example"], blockedDomains: ["games.school.example"] });
+    expect(evaluateUrl(p, "https://www.games.school.example/", { now })).toMatchObject({
+      decision: "BLOCK",
+      reason: { type: "BLOCKED_SITE", domain: "games.school.example" },
+    });
+    expect(evaluateUrl(p, "https://school.example/", { now }).decision).toBe("ALLOW");
+  });
+
+  it("enforces an 'other websites' mode newer than this build as BLOCK", () => {
+    const p = policy({ unknownSitesPolicy: "ASK_FIRST" });
+    expect(otherSitesDecision(p)).toBe("BLOCK");
+    expect(evaluateUrl(p, "https://news.example/", { now }).decision).toBe("BLOCK");
+  });
+
+  it("blocks searches where SafeSearch can't be enforced, only while it's on", () => {
+    expect(evaluateUrl(policy(), "https://www.google.co.uk/search?q=x", { now })).toMatchObject({
+      decision: "BLOCK",
+      reason: { type: "SAFE_SEARCH" },
+    });
+    expect(
+      evaluateUrl(policy({ safeSearch: false }), "https://www.google.co.uk/search?q=x", { now }).decision,
+    ).toBe("ALLOW");
   });
 
   it("blocks listed sites and their subdomains", () => {

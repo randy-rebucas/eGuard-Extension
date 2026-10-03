@@ -1,4 +1,11 @@
-import { compileRules, sameRules, PRIORITY, type DnrRule } from "@eguard/policy-engine";
+import {
+  categoryIndex,
+  compileRules,
+  evaluateUrl,
+  sameRules,
+  PRIORITY,
+  type DnrRule,
+} from "@eguard/policy-engine";
 import type { BrowserProtectionPolicy } from "@eguard/schemas";
 import { z } from "zod";
 import { typedItem, type StorageAreaLike } from "@eguard/browser-adapter";
@@ -16,6 +23,15 @@ export interface RulesApi {
 export const CONTINUE_MS = 30 * 60_000;
 
 const Continues = z.array(z.object({ host: z.string(), until: z.iso.datetime() })).max(200);
+
+/**
+ * A session rule that opens exactly `host` (any port and path), not its subdomains: requestDomains would also
+ * match every subdomain, so "Continue" on example.com would open a blocked games.example.com, and on a bare
+ * suffix like "com" every .com site.
+ */
+export function exactHostFilter(host: string): string {
+  return `^https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(:[0-9]+)?([/?#]|$)`;
+}
 
 export type EnforcementDeps = {
   rules: RulesApi;
@@ -36,15 +52,26 @@ export function createEnforcement(d: EnforcementDeps) {
   const expectedFor = (policy: BrowserProtectionPolicy | null, now: Date) =>
     policy ? compileRules(policy, { now, alwaysAllow: d.alwaysAllow }) : [];
 
+  // Rule updates read the installed rules and then replace them. Two at once (the minute alarm, a sync, a click
+  // in the popup) would both try to add the same rule ids, so they run one after another.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = queue.then(fn, fn);
+    queue = run.catch(() => {});
+    return run;
+  };
+
   /** Installs the rules `policy` needs at `now` (none for null) and returns whether the browser now has exactly them. */
-  async function apply(policy: BrowserProtectionPolicy | null, now: Date): Promise<boolean> {
-    const expected = expectedFor(policy, now);
-    if (!sameRules(expected, await d.rules.getDynamic())) {
-      await d.rules.setDynamic(expected);
-      log("rules_applied", { count: expected.length, version: policy?.version ?? null });
-    }
-    await pruneContinues(now);
-    return policy !== null && sameRules(expected, await d.rules.getDynamic());
+  function apply(policy: BrowserProtectionPolicy | null, now: Date): Promise<boolean> {
+    return serial(async () => {
+      const expected = expectedFor(policy, now);
+      if (!sameRules(expected, await d.rules.getDynamic())) {
+        await d.rules.setDynamic(expected);
+        log("rules_applied", { count: expected.length, version: policy?.version ?? null });
+      }
+      await pruneContinues(policy, now);
+      return policy !== null && sameRules(expected, await d.rules.getDynamic());
+    });
   }
 
   /** Read-back only: whether the rules in the browser are exactly what `policy` requires right now. */
@@ -53,14 +80,16 @@ export function createEnforcement(d: EnforcementDeps) {
     return sameRules(expectedFor(policy, now), await d.rules.getDynamic());
   }
 
-  /** "Continue" on a warning: this host opens for CONTINUE_MS, through a session rule. */
-  async function allowForAWhile(host: string, now: Date) {
-    const list = ((await continues.get()) ?? []).filter(
-      (c) => c.host !== host && Date.parse(c.until) > now.getTime(),
-    );
-    list.push({ host, until: new Date(now.getTime() + CONTINUE_MS).toISOString() });
-    await continues.set(list);
-    await syncSessionRules(list);
+  /** "Continue" on a warning: this exact host opens for CONTINUE_MS, through a session rule. */
+  function allowForAWhile(host: string, now: Date): Promise<void> {
+    return serial(async () => {
+      const list = ((await continues.get()) ?? []).filter(
+        (c) => c.host !== host && Date.parse(c.until) > now.getTime(),
+      );
+      list.push({ host, until: new Date(now.getTime() + CONTINUE_MS).toISOString() });
+      await continues.set(list);
+      await syncSessionRules(list);
+    });
   }
 
   async function isContinued(host: string, now: Date) {
@@ -69,9 +98,20 @@ export function createEnforcement(d: EnforcementDeps) {
     );
   }
 
-  async function pruneContinues(now: Date) {
+  /**
+   * Keeps a "Continue" only while it's running and the current policy still just warns about that site: a parent
+   * who blocks it, or focus hours starting, ends it straight away. No policy (disconnected) ends them all.
+   */
+  async function pruneContinues(policy: BrowserProtectionPolicy | null, now: Date) {
     const list = (await continues.get()) ?? [];
-    const live = list.filter((c) => Date.parse(c.until) > now.getTime());
+    const categoryOf = policy ? categoryIndex(policy) : null;
+    const live = list.filter(
+      (c) =>
+        Date.parse(c.until) > now.getTime() &&
+        policy !== null &&
+        evaluateUrl(policy, `https://${c.host}/`, { now, categoryOf: categoryOf ?? undefined }).decision ===
+          "WARN",
+    );
     if (live.length !== list.length) await continues.set(live);
     await syncSessionRules(live);
   }
@@ -81,7 +121,7 @@ export function createEnforcement(d: EnforcementDeps) {
       id: 100_000 + i,
       priority: PRIORITY.allow,
       action: { type: "allow" },
-      condition: { requestDomains: [c.host], resourceTypes: ["main_frame", "sub_frame"] },
+      condition: { regexFilter: exactHostFilter(c.host), resourceTypes: ["main_frame", "sub_frame"] },
     }));
     if (!sameRules(expected, await d.rules.getSession())) await d.rules.setSession(expected);
   }

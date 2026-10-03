@@ -1,8 +1,12 @@
 import type { BrowserProtectionPolicy } from "@eguard/schemas";
 import { categoryIndex } from "./categories.ts";
+import { labelCount } from "./domain.ts";
 import { evaluateUrl } from "./evaluate.ts";
 import { isScheduleActive } from "./schedule.ts";
+import { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCH } from "./search.ts";
 import { canonicalJson } from "./signature.ts";
+
+export { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCH, unsupportedSearch } from "./search.ts";
 
 /**
  * Compiles a verified policy into declarativeNetRequest rules: the browser matches them itself, so eGuard never
@@ -10,12 +14,14 @@ import { canonicalJson } from "./signature.ts";
  * need access to every site); the worker shows the block page when the browser reports the blocked load.
  *
  * Priorities encode evaluateUrl()'s order (highest wins):
- *   110 SafeSearch redirect, only on search engines the policy lets the child open
- *   100 allow: allowed sites, parent-approved (temporary) sites, eGuard's own web app
- *    50 block: blocked sites
+ *   110 SafeSearch redirect, only on search engines the policy lets the child open; and a block of searches on
+ *       engines where SafeSearch can't be enforced
+ *   100 allow: parent-approved (temporary) sites, eGuard's own web app
+ *   54–91 the parent's allowed and blocked sites, by specificity (listPriority): a more specific rule wins, and
+ *       allowed wins a tie
  *    40 block: blocked categories
  *    10 block every other web page: "other websites" is WARN/BLOCK, or focus hours are on
- * "Continue" on a warning adds a session allow rule at 100 (not compiled here).
+ * "Continue" on a warning adds a session allow rule for that exact host at 100 (enforcement.ts, not compiled here).
  */
 
 export type ResourceType = "main_frame" | "sub_frame";
@@ -31,6 +37,7 @@ export type DnrRule = {
       };
   condition: {
     requestDomains?: string[];
+    excludedRequestDomains?: string[];
     urlFilter?: string;
     regexFilter?: string;
     resourceTypes: ResourceType[];
@@ -39,29 +46,13 @@ export type DnrRule = {
 
 export const PRIORITY = { safeSearch: 110, allow: 100, site: 50, category: 40, other: 10 } as const;
 
-/** Search engines eGuard enforces SafeSearch on. Each needs a host permission in the manifest. */
-export const SAFE_SEARCH_ENGINES = [
-  {
-    host: "www.google.com",
-    regexFilter: "^https?://(www\\.)?google\\.com/search\\?",
-    param: { key: "safe", value: "active" },
-  },
-  {
-    host: "www.google.com.ph",
-    regexFilter: "^https?://(www\\.)?google\\.com\\.ph/search\\?",
-    param: { key: "safe", value: "active" },
-  },
-  {
-    host: "www.bing.com",
-    regexFilter: "^https?://(www\\.)?bing\\.com/search\\?",
-    param: { key: "adlt", value: "strict" },
-  },
-  {
-    host: "duckduckgo.com",
-    regexFilter: "^https?://(www\\.)?duckduckgo\\.com/\\?",
-    param: { key: "kp", value: "1" },
-  },
-] as const;
+/** Labels beyond this count as this many (no real domain gets near it; keeps every list rule below 100). */
+const MAX_LABELS = 20;
+
+/** Priority of an allowed or blocked site: deeper subdomains rank higher, and allowed beats blocked at a tie. */
+export function listPriority(domain: string, kind: "allow" | "block"): number {
+  return PRIORITY.site + 2 * Math.min(labelCount(domain), MAX_LABELS) + (kind === "allow" ? 1 : 0);
+}
 
 const FRAMES: ResourceType[] = ["main_frame", "sub_frame"];
 
@@ -78,20 +69,27 @@ export function compileRules(policy: BrowserProtectionPolicy, opts: CompileOptio
     rules.push({ id: id++, priority, action, condition });
 
   const nowMs = opts.now.getTime();
-  const allowed = [
-    ...policy.allowedDomains,
+  const alwaysOpen = [
     ...policy.temporaryAllows.filter((t) => Date.parse(t.until) > nowMs).map((t) => t.domain),
     ...(opts.alwaysAllow ?? []),
   ];
-  if (allowed.length)
-    add(PRIORITY.allow, { type: "allow" }, { requestDomains: sorted(allowed), resourceTypes: FRAMES });
+  if (alwaysOpen.length)
+    add(PRIORITY.allow, { type: "allow" }, { requestDomains: sorted(alwaysOpen), resourceTypes: FRAMES });
 
-  if (policy.blockedDomains.length) {
-    add(
-      PRIORITY.site,
-      { type: "block" },
-      { requestDomains: sorted(policy.blockedDomains), resourceTypes: FRAMES },
-    );
+  // One rule per (action, specificity), most specific first
+  const lists = new Map<number, { kind: "allow" | "block"; domains: string[] }>();
+  const put = (kind: "allow" | "block", domains: string[]) => {
+    for (const d of domains) {
+      const p = listPriority(d, kind);
+      const group = lists.get(p) ?? { kind, domains: [] };
+      group.domains.push(d);
+      lists.set(p, group);
+    }
+  };
+  put("allow", policy.allowedDomains);
+  put("block", policy.blockedDomains);
+  for (const [priority, { kind, domains }] of [...lists].sort(([a], [b]) => b - a)) {
+    add(priority, { type: kind }, { requestDomains: sorted(domains), resourceTypes: FRAMES });
   }
 
   for (const category of [...policy.blockedCategories].sort()) {
@@ -120,6 +118,15 @@ export function compileRules(policy: BrowserProtectionPolicy, opts: CompileOptio
         { regexFilter: engine.regexFilter, resourceTypes: ["main_frame"] },
       );
     }
+    add(
+      PRIORITY.safeSearch,
+      { type: "block" },
+      {
+        regexFilter: UNSUPPORTED_SEARCH.regexFilter,
+        excludedRequestDomains: UNSUPPORTED_SEARCH.excludedRequestDomains,
+        resourceTypes: ["main_frame"],
+      },
+    );
   }
   return rules;
 }
@@ -138,6 +145,7 @@ export function ruleFingerprint(r: {
   action: { type: string; redirect?: unknown };
   condition: {
     requestDomains?: string[];
+    excludedRequestDomains?: string[];
     urlFilter?: string;
     regexFilter?: string;
     resourceTypes?: string[];
@@ -149,6 +157,9 @@ export function ruleFingerprint(r: {
     action: { type: r.action.type, redirect: withoutDefaults(r.action.redirect) ?? null },
     condition: {
       requestDomains: r.condition.requestDomains ? [...r.condition.requestDomains].sort() : null,
+      excludedRequestDomains: r.condition.excludedRequestDomains?.length
+        ? [...r.condition.excludedRequestDomains].sort()
+        : null,
       urlFilter: r.condition.urlFilter ?? null,
       regexFilter: r.condition.regexFilter ?? null,
       resourceTypes: r.condition.resourceTypes ? [...r.condition.resourceTypes].sort() : null,

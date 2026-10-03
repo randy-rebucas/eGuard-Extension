@@ -33,15 +33,34 @@ export type HealthInput = {
   safeBrowsing: { value: boolean; level: SafeBrowsingLevel } | null;
   /** management.getSelf().installType, or null where the browser can't say */
   installType: string | null;
+  /** Every host permission eGuard asked for is still granted (permissions.contains), or null where unknown */
+  hostAccess: boolean | null;
   now: number;
 };
+
+/**
+ * Where people can withdraw an extension's site access. Without it SafeSearch stops (its redirects need access to
+ * the search sites) and eGuard can't reach its servers; blocking itself keeps working.
+ */
+export function siteAccessHelp(b: BrowserInfo): string {
+  switch (b.family) {
+    case "firefox":
+      return "Open Firefox's menu › Add-ons and themes › eGuard › Permissions, and turn on every site listed.";
+    case "edge":
+      return "Open edge://extensions, choose Details under eGuard, and set Site access to allow it on all the sites it asks for.";
+    default: {
+      const scheme = b.family === "brave" || b.family === "opera" ? b.family : "chrome";
+      return `Open ${scheme}://extensions, choose Details under eGuard, and set Site access to allow it on all the sites it asks for.`;
+    }
+  }
+}
 
 const note = (browser: BrowserInfo, id: CapabilityId) =>
   capabilitiesFor(browser.family).find((c) => c.id === id)?.note ?? "";
 
 const OFFLINE_KINDS = new Set(["network", "timeout", "server"]);
 
-/** The six self-checks, in the order the popup lists them. Guidance is for a parent at the child's computer. */
+/** The seven self-checks, in the order the popup lists them. Guidance is for a parent at the child's computer. */
 export function buildChecks(i: HealthInput): HealthCheck[] {
   const b = i.browser;
   const hasPolicy = i.policyVersion !== null;
@@ -107,6 +126,29 @@ export function buildChecks(i: HealthInput): HealthCheck[] {
             status: "UNSUPPORTED",
             title: "Private windows not checked",
             detail: `${b.name} doesn't let eGuard check whether it runs in private windows.`,
+          },
+  );
+
+  checks.push(
+    i.hostAccess === true
+      ? {
+          id: "site_access",
+          status: "PASS",
+          title: "Site access allowed",
+          detail: `${b.name} lets eGuard reach its servers and turn on SafeSearch.`,
+        }
+      : i.hostAccess === false
+        ? {
+            id: "site_access",
+            status: "ACTION_REQUIRED",
+            title: "Site access turned off",
+            detail: `Without it, SafeSearch is off and eGuard can't sync. ${siteAccessHelp(b)}`,
+          }
+        : {
+            id: "site_access",
+            status: "UNSUPPORTED",
+            title: "Site access not checked",
+            detail: `${b.name} doesn't let eGuard check its site access.`,
           },
   );
 
@@ -208,7 +250,10 @@ export const reportKey = (r: {
   checks: { id: string; status: string }[];
 }) => JSON.stringify([r.state, r.policyVersion, r.checks.map((c) => `${c.id}:${c.status}`)]);
 
-/** "YYYY-MM-DD" for `now` in `timeZone` (the family's), or in UTC if the zone is unknown. */
+/**
+ * "YYYY-MM-DD" for `now` in `timeZone` (the family's). Without one (no focus hours set), the browser's own time
+ * zone, as the API asks; an invalid zone falls back to UTC.
+ */
 export function dayIn(timeZone: string | undefined, now: Date): string {
   try {
     return new Intl.DateTimeFormat("en-CA", {

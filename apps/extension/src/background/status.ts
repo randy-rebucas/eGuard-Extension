@@ -19,9 +19,8 @@ export type StatusInput = {
   /** The verified policy's settings, for display. */
   policySummary?: PolicySummary | null;
   /**
-   * The protection rules for the current policy are installed in the browser and were read back.
-   * Nothing sets this until the protection engine exists (Phase 4), so PROTECTED is unreachable
-   * until then. That is intended: eGuard never claims protection it can't verify.
+   * The protection rules for the current policy are installed in the browser and were read back
+   * (enforcement.verify). Without it PROTECTED is unreachable: eGuard never claims protection it can't verify.
    */
   rulesVerified: boolean;
   /**
@@ -31,7 +30,7 @@ export type StatusInput = {
   privateWindowsAllowed?: boolean | null;
   sync: SyncRecord | null;
   lastHealthCheckAt: string | null;
-  /** The self-checks (health.ts buildChecks), shown as they are; a failed Safe Browsing check also needs attention. */
+  /** The self-checks (health.ts buildChecks), shown as they are; a failed Safe Browsing or site-access check also needs attention. */
   checks?: HealthCheck[];
   now: number;
 };
@@ -163,12 +162,19 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
           action: null,
         };
 
-  const sb = input.checks?.find((c) => c.id === "safe_browsing" && c.status === "ACTION_REQUIRED");
+  // Self-checks that need a parent: shown as issues, so the browser isn't called Protected meanwhile
+  const needsParent = (input.checks ?? []).filter(
+    (c) => (c.id === "safe_browsing" || c.id === "site_access") && c.status === "ACTION_REQUIRED",
+  );
   const attention: Issue[] = [
     ...(privateIssue ? [privateIssue] : []),
-    ...(sb
-      ? [{ id: "safe-browsing", status: sb.status, title: sb.title, detail: sb.detail, action: null }]
-      : []),
+    ...needsParent.map((c) => ({
+      id: c.id.replace("_", "-"),
+      status: c.status,
+      title: c.title,
+      detail: c.detail,
+      action: null,
+    })),
   ];
 
   const lastSuccess = sync?.lastSuccessAt ? Date.parse(sync.lastSuccessAt) : null;
@@ -195,7 +201,7 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
     return result(
       "NEEDS_ATTENTION",
       "Protection needs attention",
-      privateIssue && !sb
+      privateIssue && !needsParent.length
         ? "Websites are protected in normal windows, but not in private ones."
         : "Websites are protected, but part of this browser's protection needs a parent.",
       attention,

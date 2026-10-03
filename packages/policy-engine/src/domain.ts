@@ -21,3 +21,8 @@ export function matchDomain(host: string, rules: readonly string[]): string | nu
   for (const r of rules) if (domainCovers(r, host) && (!best || r.length > best.length)) best = r;
   return best;
 }
+
+/** How specific a domain rule is: games.example.com (3) is more specific than example.com (2). */
+export function labelCount(domain: string): number {
+  return domain.split(".").length;
+}

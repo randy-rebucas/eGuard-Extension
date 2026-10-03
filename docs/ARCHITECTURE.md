@@ -55,7 +55,7 @@ packages
 └── api-client/       fetch with timeouts + friendly errors, token manager (rotating refresh, single-flight)
 ```
 
-Planned packages: `policy-engine` (Phase 3: policy → declarativeNetRequest rules, domain matching, schedules) and `ui` if a second consumer appears.
+`packages/policy-engine` (signature check, domain matching, schedules, policy → declarativeNetRequest rules) holds everything that decides what's blocked. A `ui` package may follow if a second consumer appears.
 
 ## Trust model: parent vs child
 
@@ -72,21 +72,23 @@ The spec's "OAuth/OIDC + PKCE" parent sign-in is deliberately not used in the ch
 
 `deriveStatus()` ([status.ts](../apps/extension/src/background/status.ts)) turns facts into one of five states, in this order:
 
-| State             | When                                                                                                                                           |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UNSUPPORTED`     | Browser family/version eGuard doesn't support (Safari until validated).                                                                        |
-| `ACTION_REQUIRED` | Not connected, or connected but no policy received yet.                                                                                        |
-| `NEEDS_ATTENTION` | Policy present but its rules aren't installed exactly as it requires (read back from the browser), or eGuard isn't allowed in private windows. |
-| `SYNC_PAUSED`     | Verified rules, but the backend is unreachable or there's been no successful sync for 24 h. The last policy **stays active**.                  |
-| `PROTECTED`       | Signed policy verified, its rules installed and read back, allowed in private windows, recent sync.                                            |
+| State             | When                                                                                                                                                                                                              |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNSUPPORTED`     | Browser family/version eGuard doesn't support (Safari until validated).                                                                                                                                           |
+| `ACTION_REQUIRED` | Not connected, or connected but no policy received yet.                                                                                                                                                           |
+| `NEEDS_ATTENTION` | Policy present but its rules aren't installed exactly as it requires (read back from the browser), eGuard isn't allowed in private windows, or a check needs a parent (Safe Browsing off, site access withdrawn). |
+| `SYNC_PAUSED`     | Verified rules, but the backend is unreachable or there's been no successful sync for 24 h. The last policy **stays active**.                                                                                     |
+| `PROTECTED`       | Signed policy verified, its rules installed and read back, allowed in private windows, recent sync.                                                                                                               |
 
 `rulesVerified` comes from reading the browser's dynamic rules back on every status request and comparing them with what the verified policy requires at that moment (`sameRules`). The toolbar badge mirrors the state (`!` for attention/action).
 
 ## Enforcement
 
-`packages/policy-engine` `compileRules()` turns the verified policy into `declarativeNetRequest` dynamic rules: allow (allowed sites, active approvals, the eGuard web app) > block sites > block categories > block everything else when "other websites" is Warn/Allowed-only or focus hours are on; SafeSearch redirects sit above all of them but are only added for engines the policy lets the child open. `evaluateUrl()` states the same order in code, and a test replays the browser's matching over many policies and URLs to prove they agree, so the block page's explanation is always what actually happened.
+`packages/policy-engine` `compileRules()` turns the verified policy into `declarativeNetRequest` dynamic rules, highest priority first: SafeSearch (redirects on engines the policy lets the child open, and a block of Google searches on country domains where eGuard has no host access to add SafeSearch) > allow (active approvals, the eGuard web app) > the parent's allowed and blocked sites, ranked by specificity so a more specific rule wins (allowed `example.com`, blocked `games.example.com`: blocked; a tie goes to allowed) > block categories > block everything else when "other websites" is Warn/Allowed-only or focus hours are on. `evaluateUrl()` states the same order in code, and a test replays the browser's matching over many policies and URLs to prove they agree, so the block page's explanation is always what actually happened.
 
-Blocking uses plain block rules (no host access to every site). When the browser reports the blocked top-level load (`webNavigation.onErrorOccurred`), the worker re-evaluates the URL and, if eGuard blocked it, sends the tab to the block page. "Warn first" sites are blocked the same way; **Continue** adds a 30-minute session allow rule for that host, and the worker refuses Continue for anything the policy blocks outright. Rules are re-applied every minute (focus hours, approvals ending, rules removed behind eGuard's back) and removed entirely when the browser is disconnected.
+Category keys and the "other websites" mode are open-ended in the schema: a value added on the server after a build shipped doesn't make the policy unreadable. An unknown category's sites are blocked like any other; an unknown mode is enforced as Allowed-only.
+
+Blocking uses plain block rules (no host access to every site). When the browser reports the blocked top-level load (`webNavigation.onErrorOccurred`), the worker re-evaluates the URL and, if eGuard blocked it, sends the tab to the block page. "Warn first" sites are blocked the same way; **Continue** adds a 30-minute session allow rule for that **exact host** (a regex on scheme, host and optional port; never `requestDomains`, which would also open every subdomain, or every `.com` site for a host like `com`), and the worker refuses Continue for anything the policy blocks outright. A Continue ends early when the policy stops just warning about the site. Rules are re-applied every minute (focus hours, approvals ending, rules removed behind eGuard's back) and removed entirely when the browser is disconnected. Rule updates run one at a time.
 
 ## Sync, versioning and offline behaviour
 
@@ -94,7 +96,9 @@ Blocking uses plain block rules (no host access to every site). When the browser
 - Policies are schema-validated on receipt **and** on every read from storage, so a tampered or malformed stored value reads as "missing", never as trusted.
 - Sync runs on a 5-minute alarm, when the popup asks, and after pairing.
 - **Offline / expiry strategy.** A policy never expires on the device: protection doesn't switch off because the network did. Staleness is surfaced instead: after 24 h without a successful sync the popup shows _Sync paused_ (policy still active), and the backend raises "eGuard can't verify this browser" for the parent (same 24 h threshold as `OFFLINE_AFTER_MS` in the web app). The only thing that removes a policy is the backend revoking the installation.
-- **Integrity.** The backend signs each policy (ECDSA P-256 over canonical JSON; see [API.md](API.md#get-policy-bearer)); the public key ships in the build and is checked on receipt and on every read. A policy edited in storage (e.g. with developer tools) is discarded and downloaded again, never enforced or displayed.
+- **Integrity.** The backend signs each policy (ECDSA P-256 over canonical JSON; see [API.md](API.md#get-policy-bearer)); the public key ships in the build and is checked on receipt and on every read. A policy edited in storage (e.g. with developer tools) is discarded and downloaded again, never enforced or displayed. The rules it was enforcing stay installed meanwhile (the status says they aren't verified): failing verification never turns protection off.
+- **Key rotation.** The build can trust several keys (`VITE_POLICY_PUBLIC_KEY`, comma-separated). Ship a release that trusts old and new, switch the server to the new key once that release is out, then drop the old key in a later release.
+- **Disconnection.** The extension forgets its connection (and removes its rules) when `/token` answers `401` with `code: "installation_revoked"` or `"token_reused"`. A `401` without one of those codes counts only if `/token` keeps refusing for 10 minutes, so a server fault can't unpair every browser.
 
 ## E. UI screen map
 
@@ -125,7 +129,7 @@ Web app (Phase 6): Child → Devices → Browser card (health x/10, last sync, R
 | 2 Pairing            | `~/eguard`: `PairingCode.kind`, `BrowserInstallation`, `/api/browser/v1/pair` + `/token`, "Add browser" in the dashboard, revoke                                                                                  | **Done** |
 | 3 Policy             | `BrowserPolicy` + versions, parent editing UI, `/policy` endpoint, signing; `packages/policy-engine`                                                                                                              | **Done** |
 | 4 Protection         | declarativeNetRequest rules, block page, SafeSearch transforms, access requests + approval, starter category lists, private-window check                                                                          | **Done** |
-| 5 Health             | Six self-checks with guidance (popup, options), `/health` reporting, drift/private-window/Safe Browsing/silence alerts, Chrome Safe Browsing held on, force-install check, daily category counts (`/events`)      | **Done** |
+| 5 Health             | Seven self-checks with guidance (popup, options), `/health` reporting, drift/private-window/Safe Browsing/silence alerts, Chrome Safe Browsing held on, force-install check, daily category counts (`/events`)    | **Done** |
 | 6 Parent integration | Browser cards, alerts, access-request review in web + mobile API                                                                                                                                                  |          |
 | 7 Cross-browser      | Validate every matrix cell in Chrome, Edge, Firefox; then evaluate Safari                                                                                                                                         |          |
 | 8 Hardening          | Security/privacy review, performance (bundle size, zod/mini), accessibility audit, store packaging                                                                                                                |          |
