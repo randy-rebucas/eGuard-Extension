@@ -3,7 +3,21 @@
 All notable changes to the eGuard browser extension. Versions match `apps/extension/package.json` and the store
 uploads in `release/`.
 
-## 0.1.4 (2026-10-14)
+## 0.1.4 — 2026-10-14
+
+Adds YouTube Restricted Mode and closes the findings from the 2026-10-13 audit. **New host permissions** (YouTube)
+and a new Firefox data-collection category (`personalCommunications`); see the notes for store reviewers below.
+
+### What's new (store listing text)
+
+> - eGuard can turn on YouTube's Restricted Mode (Moderate or Strict), as set by a parent on the dashboard.
+> - SafeSearch is harder to get around: searches on other search engines are blocked while SafeSearch is on, and the
+>   block page names the search engines you can use.
+> - Approving a website no longer opens a more specific part of it that a parent blocked.
+> - The popup now says when a sync was refused or failed, instead of showing "Protection active".
+> - Fewer requests to eGuard while offline or when buttons are pressed over and over.
+
+### Changes
 
 - **YouTube Restricted Mode.** The policy's new `youtubeRestrict` (`MODERATE` / `STRICT`) sets YouTube's own
   `YouTube-Restrict` request header on its page, embed and API hosts, above every allow rule. **New host permissions**
@@ -69,6 +83,49 @@ uploads in `release/`.
   the Verify step shows errors and "Check again" while something needs a parent.
 - Sync paused shows "!" on the toolbar icon (it looked the same as Protected).
 - `npm run build` refuses a non-production `.env` for `dist/` (the store packages) unless `--dev-env` is passed.
+
+### Server dependencies
+
+- The signed revocation (`revocation` on `/token`) must ship on ~/eguard before a revoked browser disconnects. Until
+  then a revoked browser keeps its rules on.
+- The policy's `youtubeRestrict` and `names` fields, and `extensionVersion` / `browserVersion` in health reports, as in
+  the [Browser Extension API](browser-extension-api.md).
+
+### Build
+
+- Production build: API `https://www.eguard.family`, the same policy-signing public key as 0.1.3.
+- Packages: `release/eguard-{chrome,edge,firefox}-0.1.4.zip`; source for AMO: `release/eguard-source-0.1.4.zip`.
+- Unit tests (175) pass. Playwright end-to-end tests and the manual production check in Chrome, Edge and Firefox from
+  [RELEASE.md](docs/RELEASE.md#before-every-release) are still to run before upload.
+
+### Notes for store reviewers
+
+- **New host permissions:** `*://*.youtube.com/*`, `*://*.youtube-nocookie.com/*`, `*://youtubei.googleapis.com/*`
+  and `*://youtube.googleapis.com/*`. They are used only to set YouTube's own `YouTube-Restrict` request header
+  (declarativeNetRequest `modifyHeaders`) when the family's policy asks for Restricted Mode. No page content is read
+  and nothing from these hosts is sent anywhere.
+- **Firefox `data_collection_permissions`:** `personalCommunications` added as required, for the optional reason a
+  child types when asking a parent for access. `browsingActivity` is unchanged.
+- **Firefox for Android** is no longer declared (`gecko_android` removed).
+- No change to API permissions or the content security policy.
+
+### Notes to reviewer (paste into the store form)
+
+Paste after the standing notes from [PUBLISHING.md §7](docs/PUBLISHING.md#7-reviewer-notes) (Chrome "Test instructions",
+Edge "Notes for certification", AMO "Notes to reviewer"). On AMO, also include the build instructions and the
+library-patch note from §7, with `eguard-source-0.1.4.zip`.
+
+```text
+Changes in 0.1.4
+
+New host permissions: *://*.youtube.com/*, *://*.youtube-nocookie.com/*, *://youtubei.googleapis.com/* and *://youtube.googleapis.com/*. They are used only to add YouTube's own "YouTube-Restrict" request header (declarativeNetRequest modifyHeaders) when the parent turns on YouTube Restricted Mode in the dashboard. The extension reads no page content on these hosts and sends nothing from them anywhere. No other permission, content script or CSP change.
+
+To test YouTube Restricted Mode: in the test account's dashboard, open "Test Child" and set YouTube Restricted Mode to Strict. In the extension popup, choose "Sync now". Open youtube.com: Restricted Mode is on, and YouTube's own settings show it locked on. The options page lists YouTube Restricted Mode with the level chosen.
+
+Other changes: searches on search engines where SafeSearch can't be enforced are blocked while SafeSearch is on; approving a site no longer opens a more specific site the parent blocked; the popup now reports a refused or failed sync as "Sync paused"; requests to eGuard's server are rate-limited when a child presses the same button repeatedly.
+
+Firefox only: data_collection_permissions now also declares personalCommunications (required). When a child asks a parent for access to a blocked site, they can type an optional reason, which is sent to their parent. browsingActivity is unchanged. The add-on is no longer offered for Firefox for Android, which we have not tested.
+```
 
 ## 0.1.3 — 2026-10-03
 

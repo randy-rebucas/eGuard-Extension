@@ -276,8 +276,8 @@ Password: <password>
 
 To test:
 1. Install the extension. The setup page opens.
-2. Sign in to the parent dashboard above in another tab, open "Test Child", go to the Browser tab, type any computer name and choose "Get pairing code".
-3. Enter the 6-digit code in the setup page and choose Connect, then Verify configuration.
+2. Sign in to the parent dashboard above in another tab, open Devices, then Add a browser. Choose "Test Child", type any computer name and choose "Get pairing code".
+3. Within 15 minutes, enter the 8-character code in the setup page and choose Connect, then Verify configuration.
 4. Open the extension popup: it shows the protection status and the family's settings.
 5. Visit a site in a blocked category, e.g. a gambling site: the eGuard block page appears. "Ask a parent" sends an access request that appears in the dashboard.
 6. The options page shows the settings read-only; they can only be changed in the dashboard.
