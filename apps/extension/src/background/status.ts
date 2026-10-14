@@ -37,6 +37,24 @@ export type StatusInput = {
 
 const OFFLINE_KINDS = new Set(["network", "timeout", "server"]);
 
+/** The failure means eGuard couldn't be reached (not that it refused something). */
+export const isOffline = (kind: string | undefined) => kind !== undefined && OFFLINE_KINDS.has(kind);
+
+/**
+ * The last sync failed (a success clears lastError). Any failure, not only an unreachable server: settings eGuard
+ * sent but this browser refused (signature, older version) or a refused sign-in leave it on old settings too, and
+ * it mustn't read "Protection active" or "Up to date" meanwhile.
+ */
+export const syncFailed = (sync: SyncRecord | null) => !!sync?.lastError;
+
+/** What went wrong with the last sync, in a few words. */
+export function syncProblem(kind: string | undefined): string {
+  if (kind === undefined || OFFLINE_KINDS.has(kind)) return "Couldn't reach eGuard";
+  if (kind === "refused" || kind === "invalid_response") return "Couldn't accept new family settings";
+  if (kind === "unauthorized") return "eGuard didn't accept this browser's sign-in";
+  return "Couldn't get new family settings";
+}
+
 /** Where each browser keeps the switch. Steps, not a link: extensions can't open these settings pages. */
 export function privateWindowsHelp(b: BrowserInfo): string {
   switch (b.family) {
@@ -87,7 +105,7 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
   if (!input.supported) {
     return result(
       "UNSUPPORTED",
-      "Some protection features are unavailable in this browser",
+      "eGuard can't protect this browser",
       `eGuard can't protect ${browser.name}${browser.version ? ` ${browser.major ?? browser.version}` : ""} yet. Use Chrome, Edge or Firefox for full protection.`,
       [],
     );
@@ -132,14 +150,15 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
   }
 
   if (!input.rulesVerified) {
+    // Nothing may be blocked: the same weight as the rules_installed check, and as the parent's card says it
     return result(
-      "NEEDS_ATTENTION",
+      "ACTION_REQUIRED",
       "Protection needs attention",
       "eGuard has your family policy, but its protection rules aren't active in this browser.",
       [
         {
           id: "rules-not-active",
-          status: "WARNING",
+          status: "ACTION_REQUIRED",
           title: "Website protection not active",
           detail: `The rules for policy version ${input.policyVersion} aren't in place in ${browser.name} yet. Run a health check to set them up again.`,
           action: "RUN_HEALTH_CHECK",
@@ -179,16 +198,16 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
 
   const lastSuccess = sync?.lastSuccessAt ? Date.parse(sync.lastSuccessAt) : null;
   const stale = lastSuccess === null || input.now - lastSuccess > SYNC_STALE_MS;
-  if (offline || stale) {
+  if (syncFailed(sync) || stale) {
     return result(
       "SYNC_PAUSED",
       "Sync paused",
-      `Your last verified protection policy (version ${input.policyVersion}) is still active. Sync will resume automatically.`,
+      `Your last verified protection policy (version ${input.policyVersion}) is still active. eGuard keeps trying to get the latest.`,
       [
         {
           id: "sync-paused",
           status: "WARNING",
-          title: "Couldn't reach eGuard",
+          title: syncProblem(sync?.lastError?.kind),
           detail: sync?.lastError?.message ?? "No successful sync in the last day.",
           action: "SYNC_NOW",
         },
@@ -202,7 +221,9 @@ export function deriveStatus(input: StatusInput): ProtectionStatus {
       "NEEDS_ATTENTION",
       "Protection needs attention",
       privateIssue && !needsParent.length
-        ? "Websites are protected in normal windows, but not in private ones."
+        ? input.privateWindowsAllowed === false
+          ? "Websites are protected in normal windows, but not in private ones."
+          : "Websites are protected in normal windows. eGuard can't check private ones."
         : "Websites are protected, but part of this browser's protection needs a parent.",
       attention,
     );

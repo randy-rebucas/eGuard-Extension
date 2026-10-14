@@ -23,10 +23,10 @@ These are promises about the shipped code, not settings. A change that would bre
 
 | Data                                                                              | When                                                      | Why                                                                       |
 | --------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Browser name and version, extension version, OS type (`win`/`mac`/`linux`/`cros`) | Pairing, and updates on sync                              | Show the parent which browser is protected; know which capabilities apply |
+| Browser name and version, extension version, OS type (`win`/`mac`/`linux`/`cros`) | Pairing, and with each health report                      | Show the parent which browser is protected; know which capabilities apply |
 | Protection state, policy version, and each check's id and PASS/WARNING/… status   | When it changes, at least hourly, and on Run health check | Tell the parent whether protection is working                             |
 | Daily blocked counts per category                                                 | Once a day, for finished days                             | Reports without browsing history                                          |
-| An access request: the site's address and the reason typed                        | Only when the child sends one                             | So the parent can decide                                                  |
+| An access request: the site's address and the reason typed                        | Only when the child sends one                             | So the parent can decide (the reason is a message to the parent)          |
 
 Nothing identifies the computer itself: the installation id is a random server-generated id, and the device name is whatever the parent typed.
 

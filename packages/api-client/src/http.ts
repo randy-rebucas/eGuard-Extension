@@ -13,7 +13,15 @@ export type FailureKind =
 
 export type ApiResult<T> =
   | { ok: true; data: T; status: number }
-  | { ok: false; kind: FailureKind; status: number | null; message: string; code?: string | undefined };
+  | {
+      ok: false;
+      kind: FailureKind;
+      status: number | null;
+      message: string;
+      code?: string | undefined;
+      /** The error body's `revocation` (/token only), unverified. */
+      revocation?: unknown;
+    };
 
 export type HttpClientOptions = {
   /** API origin, e.g. https://www.eguard.family. Paths are appended as-is. */
@@ -23,6 +31,8 @@ export type HttpClientOptions = {
   /** Sent as X-eGuard-Client, like the mobile apps (history then reads "… on Chrome extension"). */
   clientId?: string;
   onDiagnostic?: (event: string, detail: Record<string, unknown>) => void;
+  /** eGuard's clock (the Date header of any answer), so time limits don't follow a computer clock moved back. */
+  onServerDate?: (serverMs: number) => void;
 };
 
 export type RequestOptions = {
@@ -82,6 +92,9 @@ export function createHttpClient(opts: HttpClientOptions) {
       return { ok: false, kind, status: null, message: FRIENDLY[kind] };
     }
 
+    const serverDate = Date.parse(res.headers.get("date") ?? "");
+    if (Number.isFinite(serverDate)) opts.onServerDate?.(serverDate);
+
     let json: unknown;
     try {
       json = res.status === 204 ? null : await res.json();
@@ -123,6 +136,7 @@ export function createHttpClient(opts: HttpClientOptions) {
       status: res.status,
       message: serverText ?? FRIENDLY[kind],
       code: body.success ? body.data.code : undefined,
+      ...(body.success && body.data.revocation !== undefined ? { revocation: body.data.revocation } : {}),
     };
   }
 

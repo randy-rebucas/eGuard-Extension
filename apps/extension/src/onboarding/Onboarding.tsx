@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
 import { ArrowRight } from "lucide-react";
 import type { ProtectionStatus } from "@eguard/schemas";
 import { useStatus } from "../shared/status-store.ts";
@@ -34,7 +34,9 @@ export function Onboarding() {
         {step ? <Stepper current={step} /> : null}
         <Card className="mt-4 p-6 sm:p-8">
           {!status || !step ? (
-            <div className="h-40 animate-pulse rounded-[10px] bg-surface-3" aria-label="Loading" />
+            <div role="status" className="h-40 animate-pulse rounded-[10px] bg-surface-3">
+              <span className="sr-only">Loading</span>
+            </div>
           ) : step === "Welcome" ? (
             <Welcome headingRef={heading} status={status} onNext={() => setStep("Connect")} />
           ) : step === "Connect" ? (
@@ -126,8 +128,11 @@ function Connect({ headingRef, onDone }: { headingRef: HeadingRef; onDone: () =>
       <H r={headingRef}>Connect to eGuard</H>
       <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-[15px] leading-relaxed text-ink-2" id={hintId}>
         <li>On your phone or computer, open the eGuard parent dashboard.</li>
-        <li>Choose your child, then Devices, then Add browser.</li>
-        <li>Enter the pairing code it shows. Codes work once and expire after a few minutes.</li>
+        <li>
+          Open Devices, then Add a browser. Choose your child, name this computer, and choose Get pairing
+          code.
+        </li>
+        <li>Enter the code it shows. A code works once, within 15 minutes.</li>
       </ol>
       <label htmlFor="pairing-code" className="mt-6 block text-sm font-semibold">
         Pairing code
@@ -147,7 +152,7 @@ function Connect({ headingRef, onDone }: { headingRef: HeadingRef; onDone: () =>
         aria-describedby={error ? `${hintId} ${errId}` : hintId}
         aria-invalid={error ? true : undefined}
         className="mt-2 h-14 w-full rounded-[12px] border border-line-strong bg-surface px-4 text-center font-display text-2xl tracking-[0.4em] uppercase outline-none focus:border-accent focus:ring-4 focus:ring-accent-soft aria-invalid:border-crit"
-        placeholder="••••••"
+        placeholder="••••••••"
       />
       {error ? (
         <p id={errId} role="alert" className="mt-2 text-sm text-crit-ink">
@@ -202,11 +207,13 @@ function Review({
 }
 
 function Verify({ headingRef, status }: { headingRef: HeadingRef; status: ProtectionStatus }) {
-  const { run, busy } = useStatus();
+  const { run, busy, error } = useStatus();
   const [checked, setChecked] = useState(false);
+  const check = useCallback(() => run({ type: "RUN_HEALTH_CHECK" }).then(() => setChecked(true)), [run]);
   useEffect(() => {
-    void run({ type: "RUN_HEALTH_CHECK" }).then(() => setChecked(true));
-  }, [run]);
+    void check();
+  }, [check]);
+  const needsParent = status.state === "ACTION_REQUIRED" || status.state === "NEEDS_ATTENTION";
   const { tone, Icon } = stateVisual(status);
   const t = TONE_CLASS[tone];
   return (
@@ -234,9 +241,20 @@ function Verify({ headingRef, status }: { headingRef: HeadingRef; status: Protec
               ))}
             </ul>
           ) : null}
+          {error ? (
+            <p role="alert" className="mt-4 text-sm text-crit-ink">
+              {error.message}
+            </p>
+          ) : null}
+          {needsParent || error ? (
+            <Button variant="secondary" className="mt-5" onClick={() => void check()}>
+              Check again
+            </Button>
+          ) : null}
           <p className="mt-6 text-sm leading-relaxed text-ink-3">
-            You can close this tab. The eGuard icon in the toolbar always shows this browser's protection
-            status.
+            {needsParent
+              ? "Fix what's listed above, then check again. The eGuard icon in the toolbar always shows this browser's protection status."
+              : "You can close this tab. The eGuard icon in the toolbar always shows this browser's protection status."}
           </p>
         </>
       )}

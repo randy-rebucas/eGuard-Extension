@@ -2,6 +2,9 @@ import {
   categoryIndex,
   compileRules,
   evaluateUrl,
+  exactHostFilter,
+  safeSearchEnginesFor,
+  safeSearchRule,
   sameRules,
   PRIORITY,
   type DnrRule,
@@ -24,14 +27,7 @@ export const CONTINUE_MS = 30 * 60_000;
 
 const Continues = z.array(z.object({ host: z.string(), until: z.iso.datetime() })).max(200);
 
-/**
- * A session rule that opens exactly `host` (any port and path), not its subdomains: requestDomains would also
- * match every subdomain, so "Continue" on example.com would open a blocked games.example.com, and on a bare
- * suffix like "com" every .com site.
- */
-export function exactHostFilter(host: string): string {
-  return `^https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(:[0-9]+)?([/?#]|$)`;
-}
+export { exactHostFilter } from "@eguard/policy-engine";
 
 export type EnforcementDeps = {
   rules: RulesApi;
@@ -81,14 +77,14 @@ export function createEnforcement(d: EnforcementDeps) {
   }
 
   /** "Continue" on a warning: this exact host opens for CONTINUE_MS, through a session rule. */
-  function allowForAWhile(host: string, now: Date): Promise<void> {
+  function allowForAWhile(host: string, now: Date, policy: BrowserProtectionPolicy): Promise<void> {
     return serial(async () => {
       const list = ((await continues.get()) ?? []).filter(
         (c) => c.host !== host && Date.parse(c.until) > now.getTime(),
       );
       list.push({ host, until: new Date(now.getTime() + CONTINUE_MS).toISOString() });
       await continues.set(list);
-      await syncSessionRules(list);
+      await syncSessionRules(list, policy);
     });
   }
 
@@ -113,16 +109,25 @@ export function createEnforcement(d: EnforcementDeps) {
           "WARN",
     );
     if (live.length !== list.length) await continues.set(live);
-    await syncSessionRules(live);
+    await syncSessionRules(live, policy);
   }
 
-  async function syncSessionRules(list: { host: string }[]) {
+  /**
+   * One allow rule per continued host, and the SafeSearch redirect of any search engine among them: the allow
+   * rule outranks the compiled rules, which leave out the redirect of an engine that's only warned about, so
+   * without it "Continue" on www.google.com would turn SafeSearch off.
+   */
+  async function syncSessionRules(list: { host: string }[], policy: BrowserProtectionPolicy | null) {
     const expected: DnrRule[] = list.map((c, i) => ({
       id: 100_000 + i,
       priority: PRIORITY.allow,
       action: { type: "allow" },
       condition: { regexFilter: exactHostFilter(c.host), resourceTypes: ["main_frame", "sub_frame"] },
     }));
+    if (policy?.safeSearch) {
+      const engines = new Set(list.flatMap((c) => safeSearchEnginesFor(c.host)));
+      [...engines].forEach((e, i) => expected.push(safeSearchRule(e, 101_000 + i)));
+    }
     if (!sameRules(expected, await d.rules.getSession())) await d.rules.setSession(expected);
   }
 

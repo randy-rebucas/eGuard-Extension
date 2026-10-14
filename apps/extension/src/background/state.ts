@@ -46,6 +46,12 @@ export const BlockCounts = z.record(
 );
 export type BlockCounts = z.infer<typeof BlockCounts>;
 
+/** How far eGuard's clock is ahead of this computer's (ms), from the last answer's Date header. */
+export const ClockRecord = z.object({ skewMs: z.number() });
+
+/** When buttons that reach eGuard were pressed (ms), for service.ts MANUAL_LIMITS. */
+const ManualPresses = z.object({ sync: z.array(z.number()).max(200), report: z.array(z.number()).max(200) });
+
 const Credential = z.object({
   installationId: z.string().min(1),
   refreshToken: z.string().min(20),
@@ -54,7 +60,7 @@ const Credential = z.object({
 const Access = z.object({ token: z.string().min(20), expiresAt: z.iso.datetime() });
 
 /**
- * Everything the worker persists. `local` survives restarts; `session` (access token only) is
+ * Everything the worker persists. `local` survives restarts; `session` (access token, button presses) is
  * held in memory by the browser and cleared when it closes. No browsing data is stored here.
  */
 export function createState(
@@ -69,7 +75,14 @@ export function createState(
     sync: typedItem(local, "sync", SyncRecord, onInvalid),
     health: typedItem(local, "health", HealthRecord, onInvalid),
     blockCounts: typedItem(local, "blockCounts", BlockCounts, onInvalid),
+    clock: typedItem(local, "clock", ClockRecord, onInvalid),
+    /**
+     * The highest policy version accepted for this connection. Outlives a stored policy that stops verifying (and
+     * is discarded), so an older signed policy can't be slipped in afterwards.
+     */
+    policyFloor: typedItem(local, "policyFloor", z.number().int().positive(), onInvalid),
     access: typedItem(session, "access", Access, onInvalid),
+    manualPresses: typedItem(session, "manualPresses", ManualPresses, onInvalid),
   };
 
   const credentials: CredentialStore = {
@@ -89,6 +102,7 @@ export function createState(
     await Promise.all([
       items.installation.remove(),
       items.policy.remove(),
+      items.policyFloor.remove(),
       items.sync.remove(),
       items.health.remove(),
       items.blockCounts.remove(),

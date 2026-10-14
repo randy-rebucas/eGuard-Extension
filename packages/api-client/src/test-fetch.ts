@@ -2,7 +2,7 @@
 export type Handler = (req: {
   body: unknown;
   headers: Record<string, string>;
-}) => { status: number; json?: unknown } | "network-error";
+}) => { status: number; json?: unknown; headers?: Record<string, string> } | "network-error";
 
 export function fakeFetch(routes: Record<string, Handler | Handler[]>) {
   const calls: { path: string; body: unknown; headers: Record<string, string> }[] = [];
@@ -20,7 +20,7 @@ export function fakeFetch(routes: Record<string, Handler | Handler[]>) {
     if (out === "network-error") throw new TypeError("Failed to fetch");
     return new Response(out.json === undefined ? null : JSON.stringify(out.json), {
       status: out.status,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...out.headers },
     });
   };
   return { fetch: fetchImpl, calls };

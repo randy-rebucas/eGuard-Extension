@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { BrowserContext, Page } from "@playwright/test";
+import { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCHES, exactHostFilter } from "@eguard/policy-engine";
 import { E2E_PORT, expect, onboardingPage, test } from "./fixtures.ts";
 
 /**
@@ -44,7 +45,7 @@ test("blocks a site the family blocked, and a category site, with a calm block p
 
   const game = await visit(context, site("play"));
   await onBlockPage(game);
-  await expect(game.getByText(/category your family's settings don't include: gaming/)).toBeVisible();
+  await expect(game.getByText(/category your family blocks: Gaming/)).toBeVisible();
 });
 
 test("opens allowed and ordinary sites normally", async ({ context, extensionId }) => {
@@ -136,22 +137,162 @@ test("SafeSearch rules are installed for the search engines", async ({ context, 
         r.action.redirect?.transform?.queryTransform?.addOrReplaceParams?.[0],
       ]),
   );
-  expect(redirects).toEqual([
-    ["^https?://(www\\.)?google\\.com/search\\?", { key: "safe", value: "active" }],
-    ["^https?://(www\\.)?google\\.com\\.ph/search\\?", { key: "safe", value: "active" }],
-    ["^https?://(www\\.)?bing\\.com/((images|videos|news)/)?search\\?", { key: "adlt", value: "strict" }],
-    ["^https?://((www|html|lite)\\.)?duckduckgo\\.com/((html|lite)/?)?\\?", { key: "kp", value: "1" }],
-  ]);
-  // Google's other country domains can't get SafeSearch (no host access), so their searches are blocked.
-  // Installed and read back means the browser accepted the regex and the exclusions.
+  expect(redirects).toEqual(SAFE_SEARCH_ENGINES.map((e) => [e.regexFilter, e.param]));
+  // Searches eGuard can't make safe (Google's country domains, trailing-dot hosts, other engines) are blocked.
+  // Installed and read back means the browser accepted every regex and the exclusions.
   const unsupported = await worker.evaluate(async () =>
     (await chrome.declarativeNetRequest.getDynamicRules()).filter(
-      (r) => r.action.type === "block" && r.condition.regexFilter?.includes("google"),
+      (r) => r.action.type === "block" && r.priority === 110,
     ),
   );
-  expect(unsupported).toMatchObject([
-    { priority: 110, condition: { excludedRequestDomains: ["google.com", "google.com.ph"] } },
+  expect(unsupported).toHaveLength(UNSUPPORTED_SEARCHES.length);
+  expect(unsupported[0]).toMatchObject({
+    condition: { excludedRequestDomains: ["google.com", "google.com.ph"] },
+  });
+
+  // Chromium's own matcher, without the network: what each search ends as
+  const outcome = (url: string) =>
+    worker.evaluate(async (u) => {
+      const res = await chrome.declarativeNetRequest.testMatchOutcome({ url: u, type: "main_frame" });
+      const rules = await chrome.declarativeNetRequest.getDynamicRules();
+      return res.matchedRules.map((m) => rules.find((r) => r.id === m.ruleId)?.action.type);
+    }, url);
+  expect(await outcome("https://www.google.com/search?q=x")).toEqual(["redirect"]);
+  expect(await outcome("https://cn.bing.com/search?q=x")).toEqual(["redirect"]);
+  for (const url of [
+    "https://www.google.com./search?q=x",
+    "https://www.bing.com./search?q=x",
+    "https://www.google.co.uk/search?q=x",
+    "https://search.yahoo.com/search?p=x",
+    "https://yandex.ru/search/?text=x",
+  ]) {
+    expect(await outcome(url), url).toEqual(["block"]);
+  }
+});
+
+test("YouTube Restricted Mode: Chromium takes the header rule, reads it back as in place, and applies it above an allow", async ({
+  context,
+  extensionId,
+  backend,
+  worker,
+}) => {
+  // An allowed youtube.com would cancel a header rule ranked below it
+  backend.state.policyPatch = {
+    youtubeRestrict: "STRICT",
+    allowedDomains: ["school.example", "youtube.com"],
+  };
+  // Stands in for a parent allowing eGuard in private windows, so the status can reach Protected
+  await worker.evaluate(() => {
+    Object.defineProperty(chrome.extension, "isAllowedIncognitoAccess", {
+      value: () => Promise.resolve(true),
+      configurable: true,
+    });
+  });
+  await pair(context, extensionId);
+  const header = await worker.evaluate(async () =>
+    (await chrome.declarativeNetRequest.getDynamicRules()).find((r) => r.action.type === "modifyHeaders"),
+  );
+  expect(header?.action.requestHeaders).toEqual([
+    { header: "YouTube-Restrict", operation: "set", value: "Strict" },
   ]);
+
+  // The string values: @types/chrome declares ResourceType as an enum, which the test can't import
+  const outcome = (url: string, type: `${chrome.declarativeNetRequest.ResourceType}`) =>
+    worker.evaluate(
+      async ([u, t]) => {
+        const res = await chrome.declarativeNetRequest.testMatchOutcome({ url: u, type: t });
+        const rules = await chrome.declarativeNetRequest.getDynamicRules();
+        return res.matchedRules.map((m) => rules.find((r) => r.id === m.ruleId)?.action.type).sort();
+      },
+      [url, type] as const,
+    );
+  // The page, the player's API calls and embeds all carry it; other Google hosts don't
+  expect(await outcome("https://www.youtube.com/results?search_query=x", "main_frame")).toContain(
+    "modifyHeaders",
+  );
+  expect(await outcome("https://m.youtube.com/watch?v=1", "main_frame")).toContain("modifyHeaders");
+  expect(await outcome("https://www.youtube.com/youtubei/v1/search", "xmlhttprequest")).toContain(
+    "modifyHeaders",
+  );
+  expect(await outcome("https://youtubei.googleapis.com/youtubei/v1/player", "xmlhttprequest")).toContain(
+    "modifyHeaders",
+  );
+  expect(await outcome("https://www.youtube-nocookie.com/embed/1", "sub_frame")).toContain("modifyHeaders");
+  expect(await outcome("https://maps.googleapis.com/x", "xmlhttprequest")).toEqual([]);
+
+  // Rules read back match what the policy asks for (a mismatch would show "rules not in place")
+  const popup = await context.newPage();
+  await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
+  await expect(popup.getByRole("heading", { name: "Protection active" })).toBeVisible({ timeout: 10_000 });
+});
+
+test("Chromium accepts every regex eGuard compiles (one refused rule fails the whole update)", async ({
+  worker,
+}) => {
+  const all = [
+    ...SAFE_SEARCH_ENGINES.map((e) => e.regexFilter),
+    ...UNSUPPORTED_SEARCHES.map((u) => u.regexFilter),
+    exactHostFilter("news.example.org"),
+  ];
+  const res = await worker.evaluate(
+    (list) => Promise.all(list.map((regex) => chrome.declarativeNetRequest.isRegexSupported({ regex }))),
+    all,
+  );
+  expect(res.map((r, i) => (r.isSupported ? "ok" : `${all[i]}: ${r.reason}`))).toEqual(all.map(() => "ok"));
+});
+
+test("a trailing dot doesn't get past blocked sites or categories", async ({ context, extensionId }) => {
+  await pair(context, extensionId);
+  for (const name of ["blocked", "play"]) {
+    const page = await visit(context, `http://${name}.example.:${E2E_PORT}/`);
+    await onBlockPage(page);
+  }
+});
+
+test("'Continue' on a warned search engine keeps SafeSearch on", async ({
+  context,
+  extensionId,
+  backend,
+  worker,
+}) => {
+  backend.state.policyPatch = { unknownSitesPolicy: "WARN" };
+  await pair(context, extensionId);
+  const popup = await context.newPage();
+  await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
+  const res = await popup.evaluate(() =>
+    chrome.runtime.sendMessage<unknown, { ok: boolean }>({
+      type: "CONTINUE_TO_SITE",
+      url: "https://www.google.com/",
+    }),
+  );
+  expect(res).toMatchObject({ ok: true });
+  const matched = await worker.evaluate(async () => {
+    const res = await chrome.declarativeNetRequest.testMatchOutcome({
+      url: "https://www.google.com/search?q=x",
+      type: "main_frame",
+    });
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    return res.matchedRules.map((m) => [m.rulesetId, rules.find((r) => r.id === m.ruleId)?.action.type]);
+  });
+  expect(matched).toEqual([["_session", "redirect"]]);
+});
+
+test("an unsigned 'removed' answer never lifts the rules", async ({
+  context,
+  extensionId,
+  backend,
+  worker,
+}) => {
+  await pair(context, extensionId);
+  const before = await worker.evaluate(() => chrome.declarativeNetRequest.getDynamicRules());
+  backend.state.forgedRevocation = true;
+  await worker.evaluate(() => chrome.storage.session.clear()); // the access token: the next call refreshes
+  const popup = await context.newPage();
+  await popup.goto(`chrome-extension://${extensionId}/popup/index.html`);
+  await popup.getByRole("button", { name: "Run health check" }).click();
+  await expect(popup.getByText("Sync paused").first()).toBeVisible({ timeout: 10_000 });
+  expect(await worker.evaluate(() => chrome.declarativeNetRequest.getDynamicRules())).toEqual(before);
+  await onBlockPage(await visit(context, site("blocked")));
 });
 
 test("removing the browser removes every rule", async ({ context, extensionId, backend, worker }) => {

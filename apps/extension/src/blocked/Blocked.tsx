@@ -2,32 +2,17 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Ban, Clock, Lock, Send, Sprout, Tag, UserRound, type LucideIcon } from "lucide-react";
 import type { BlockInfo } from "@eguard/schemas";
 import { categoryVisual } from "../shared/categories.ts";
+import { clockTime } from "../shared/format.ts";
 import { send } from "../shared/messaging.ts";
 import { Button, Card, LogoMark } from "../ui/components.tsx";
-
-const CATEGORY_LABEL: Record<string, string> = {
-  ADULT: "adult content",
-  GAMBLING: "gambling",
-  MALWARE: "harmful software",
-  PHISHING: "phishing",
-  VIOLENCE: "violence",
-  DRUGS: "drugs",
-  WEAPONS: "weapons",
-  HATE: "hate and extremism",
-  DATING: "dating",
-  SOCIAL_MEDIA: "social media",
-  GAMING: "gaming",
-  STREAMING: "streaming",
-  SHOPPING: "shopping",
-  DOWNLOADS: "downloads",
-};
 
 /** How often an open block page asks whether a parent answered (the API suggests every 15–30 s). */
 const ANSWER_POLL_MS = 20_000;
 
-function to12h(hhmm: string) {
-  const [h = 0, m = 0] = hhmm.split(":").map(Number);
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+function listOf(items: string[]) {
+  return items.length < 2
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
 }
 
 /** Why, in plain words. Explains the family's setting; never scolds, never lists what else is blocked. */
@@ -43,23 +28,31 @@ function explain(info: BlockInfo): { title: string; body: string } {
     case "CATEGORY":
       return {
         title: "This website is blocked",
-        body: `It's in a category your family's settings don't include: ${CATEGORY_LABEL[r.category] ?? "other"}.`,
+        body: `It's in a category your family blocks: ${categoryVisual(r.category).label}.`,
       };
     case "FOCUS_HOURS":
       return {
         title: "It's focus time",
-        body: `Right now only websites on your family's list open.${r.until ? ` Focus time ends at ${to12h(r.until)}.` : ""}`,
+        body: `Right now only websites on your family's list open.${r.until ? ` Focus time ends at ${clockTime(r.until)}.` : ""}`,
       };
     case "UNKNOWN_SITE":
       return {
         title: "This website isn't on your list",
         body: "Only websites your family has chosen open in this browser.",
       };
-    case "SAFE_SEARCH":
-      return {
-        title: "Search on google.com instead",
-        body: "Your family uses SafeSearch, which eGuard can only turn on at google.com. Search there and it works as usual.",
-      };
+    case "SAFE_SEARCH": {
+      // Only engines the family's settings let the child open; none, and the page doesn't send them anywhere
+      const engines = r.engines ?? [];
+      return engines.length
+        ? {
+            title: "Search somewhere SafeSearch works",
+            body: `Your family uses SafeSearch, which eGuard can turn on at ${listOf(engines)}, but not here. Search there and it works as usual.`,
+          }
+        : {
+            title: "This search is blocked",
+            body: "Your family uses SafeSearch, which eGuard can't turn on here.",
+          };
+    }
     default:
       return {
         title: "This website is blocked",
@@ -113,7 +106,7 @@ export function Blocked() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per blocked URL
   }, [url]);
 
-  // While a parent hasn't answered, look for the answer (GET /access-requests has no rate limit; 20 s is plenty)
+  // While a parent hasn't answered, look for the answer (the worker shares one recent list among open block pages)
   const waiting = info?.request?.status === "PENDING";
   useEffect(() => {
     if (!waiting) return;
@@ -159,11 +152,24 @@ export function Blocked() {
     return (
       <Shell>
         {error ? (
-          <p role="alert" className="text-crit-ink">
-            {error}
-          </p>
+          <>
+            <p role="alert" className="text-crit-ink">
+              {error}
+            </p>
+            {/* Not a dead end: the worker may just be starting */}
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Button onClick={goBack}>
+                <ArrowLeft className="size-4" aria-hidden="true" /> Go back
+              </Button>
+              <Button variant="secondary" onClick={() => location.reload()}>
+                Try again
+              </Button>
+            </div>
+          </>
         ) : (
-          <div className="h-40 animate-pulse rounded-[10px] bg-surface-3" aria-label="Loading" />
+          <div role="status" className="h-40 animate-pulse rounded-[10px] bg-surface-3">
+            <span className="sr-only">Loading</span>
+          </div>
         )}
       </Shell>
     );
@@ -279,7 +285,10 @@ export function Blocked() {
                   A parent said no to this website last time. You can ask again.
                 </p>
               ) : request?.status === "APPROVED" ? (
-                <p className="text-sm text-ink-2">The time a parent allowed for this website has ended.</p>
+                // The approval ended, or covered the site but not a part of it the family blocks separately
+                <p className="text-sm text-ink-2">
+                  A parent allowed this website before, but it's blocked here now. You can ask again.
+                </p>
               ) : (
                 <p className="text-sm text-ink-2">
                   {info.childName ? `${info.childName}, you` : "You"} can ask a parent to allow it.

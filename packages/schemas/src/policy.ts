@@ -28,6 +28,7 @@ export const WebCategory = z.enum([
   "STREAMING",
   "SHOPPING",
   "DOWNLOADS",
+  "PROXY",
 ]);
 export type WebCategory = z.infer<typeof WebCategory>;
 
@@ -58,6 +59,14 @@ export const BrowserProtectionPolicy = z.looseObject({
   version: z.number().int().positive(),
   safeBrowsing: z.boolean(),
   safeSearch: z.boolean(),
+  /**
+   * YouTube Restricted Mode: OFF, MODERATE or STRICT; a level this build doesn't know is enforced as STRICT
+   * (policy-engine youtubeRestrictHeader). Optional: servers before 2026-10-13 don't send it, and it's then off.
+   */
+  youtubeRestrict: z
+    .string()
+    .regex(/^[A-Z][A-Z_]{1,31}$/)
+    .optional(),
   blockedCategories: z.array(CategoryKey).max(64),
   blockedDomains: z.array(Domain).max(5000),
   allowedDomains: z.array(Domain).max(5000),
@@ -92,5 +101,10 @@ export const PolicyEnvelope = z.object({
   signature: z.string().min(1).max(200),
   /** First 16 hex chars of SHA-256 of the signing public key, for diagnostics and rotation */
   keyId: z.string().max(64),
+  /**
+   * The names /pair returned, as they are now (a parent can rename the child or family). Outside the signature:
+   * display text only. Optional, since older servers don't send it.
+   */
+  names: z.object({ familyName: z.string(), childName: z.string(), deviceName: z.string() }).optional(),
 });
 export type PolicyEnvelope = z.infer<typeof PolicyEnvelope>;

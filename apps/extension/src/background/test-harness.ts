@@ -27,6 +27,8 @@ export type Harness = {
   setInstallType: (t: string | null) => void;
   setHostAccess: (granted: boolean | null) => void;
   log: Mock<(event: string, detail?: Record<string, unknown>) => void>;
+  /** Moves the clock the service and token manager read (starts at NOW). */
+  advance: (ms: number) => void;
 };
 
 export const NOW = Date.parse("2026-09-29T10:00:00Z");
@@ -63,6 +65,29 @@ export const signFor = (p: unknown) =>
 /** The body GET /api/browser/v1/policy returns: the policy and eGuard's signature. */
 export const signed = (p: object) => ({ policy: p, signature: signFor(p), keyId: "testkey" });
 
+/** /token's answer for a removed browser, with eGuard's signed revocation (as ~/eguard signRevocation sends it). */
+export const removedAnswer = (installationId = "bi_1", code = "installation_revoked") => {
+  const revocation = { type: "eguard.browser.revoked", installationId, at: new Date(NOW).toISOString() };
+  return {
+    status: 401,
+    json: {
+      error: "This browser is no longer connected to eGuard.",
+      code,
+      revocation: { revocation, signature: signFor(revocation), keyId: "testkey" },
+    },
+  };
+};
+
+/** /token's answer: fresh tokens, the access token good for a day (tests that move the clock far). */
+export const tokenOk = () => ({
+  status: 200,
+  json: {
+    accessToken: tok("at1"),
+    accessTokenExpiresAt: new Date(NOW + 864e5).toISOString(),
+    refreshToken: tok("rt1"),
+  },
+});
+
 export const pairOk = () => ({
   status: 201,
   json: {
@@ -82,6 +107,7 @@ export function harness(
   browser: BrowserInfo = CHROME,
 ): Harness {
   const f = fakeFetch(routes);
+  let clock = NOW;
   const local = memoryArea();
   const session = memoryArea();
   const state = createState(local, session);
@@ -89,8 +115,9 @@ export function harness(
   const tokens = createTokenManager({
     http,
     store: state.credentials,
-    now: () => NOW,
+    now: () => clock,
     sleep: async () => {},
+    verifyRevocation: async (p) => verifyPolicySignature(await policyKey, p.revocation, p.signature),
     onRevoked: () => state.forgetInstallation(),
   });
   const openTab: Mock<(url: string) => Promise<void>> = vi.fn(async (_url: string) => {});
@@ -138,7 +165,7 @@ export function harness(
       : null,
     installType: async () => install,
     hostAccess: async () => hostAccess,
-    now: () => NOW,
+    now: () => clock,
     log,
   });
   return {
@@ -155,5 +182,6 @@ export function harness(
     safeBrowsing: sb,
     setInstallType: (t) => void (install = t),
     setHostAccess: (granted) => void (hostAccess = granted),
+    advance: (ms) => void (clock += ms),
   };
 }

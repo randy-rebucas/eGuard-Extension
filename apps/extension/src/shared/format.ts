@@ -12,6 +12,12 @@ export function relativeTime(iso: string | null, now = Date.now()): string | nul
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** "21:00" → "9:00 PM", as the block page and the dashboard write times. */
+export function clockTime(hhmm: string): string {
+  const [h = 0, m = 0] = hhmm.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+}
+
 /** "Chrome 153" */
 export function browserLabel(b: { name: string; major: number | null }): string {
   return b.major ? `${b.name} ${b.major}` : b.name;

@@ -1,11 +1,11 @@
 import type { z } from "zod";
-import { TokenGrant } from "@eguard/schemas";
+import { RevocationProof, TokenGrant } from "@eguard/schemas";
 import type { ApiResult, HttpClient, RequestOptions } from "./http.ts";
 import { PATHS } from "./paths.ts";
 
 /**
  * Long-lived installation credential. Kept in storage.local; never contains a parent's password.
- * `rejectedSince`: when /token first refused it without saying the browser was removed (see REVOKE_CONFIRM_MS).
+ * `rejectedSince`: when /token first refused it without a verified revocation (diagnostics only, see REVOKED_CODES).
  */
 export type InstallationCredential = {
   installationId: string;
@@ -36,14 +36,13 @@ export const EXPIRY_SKEW_MS = 60_000;
 export const REFRESH_RETRY_DELAYS_MS = [2_000, 8_000] as const;
 const RETRYABLE = new Set(["network", "timeout", "server"]);
 
-/** Error codes with which /token says this browser was removed or disconnected: forget it at once. */
-export const REVOKED_CODES = new Set(["installation_revoked", "token_reused"]);
 /**
- * A 401 from /token without one of those codes could be a server fault, and forgetting the installation removes
- * every rule and needs a parent to pair again. So it only counts once /token has kept refusing for this long
- * (two sync rounds). Protection stays on in the meantime.
+ * Error codes with which /token says this browser was removed or disconnected. Forgotten at once, but only with
+ * eGuard's signed revocation for this installation: forgetting removes every rule, and anyone between the browser
+ * and eGuard (a proxy with its own root certificate) could send a 401. Any other 401 never disconnects: the
+ * browser keeps its rules and keeps trying, and the parent sees it stop checking in.
  */
-export const REVOKE_CONFIRM_MS = 10 * 60_000;
+export const REVOKED_CODES = new Set(["installation_revoked", "token_reused"]);
 
 export type TokenManagerOptions = {
   http: HttpClient;
@@ -51,6 +50,8 @@ export type TokenManagerOptions = {
   now?: () => number;
   /** Waits between /token retries (tests pass a no-op). */
   sleep?: (ms: number) => Promise<void>;
+  /** Checks eGuard's signature over a revocation (the policy keys). */
+  verifyRevocation: (proof: RevocationProof) => Promise<boolean>;
   /** Called once when the backend rejects the refresh token (parent removed this browser). */
   onRevoked?: () => void | Promise<void>;
 };
@@ -65,6 +66,7 @@ export function createTokenManager({
   store,
   now = Date.now,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  verifyRevocation,
   onRevoked,
 }: TokenManagerOptions) {
   let inFlight: Promise<ApiResult<AccessToken>> | null = null;
@@ -87,14 +89,18 @@ export function createTokenManager({
     }
     if (!res.ok) {
       if (res.kind === "unauthorized") {
-        const since = cred.rejectedSince ? Date.parse(cred.rejectedSince) : null;
+        const proof = RevocationProof.safeParse(res.revocation);
         const confirmed =
-          (res.code !== undefined && REVOKED_CODES.has(res.code)) ||
-          (since !== null && now() - since >= REVOKE_CONFIRM_MS);
+          res.code !== undefined &&
+          REVOKED_CODES.has(res.code) &&
+          proof.success &&
+          proof.data.revocation.installationId === cred.installationId &&
+          (await verifyRevocation(proof.data));
         if (confirmed) {
           await store.clear();
           await onRevoked?.();
-        } else if (since === null) {
+        } else if (!cred.rejectedSince) {
+          // Kept for diagnostics; the browser stays connected and its rules stay on
           await store.setCredential({ ...cred, rejectedSince: new Date(now()).toISOString() });
         }
       }

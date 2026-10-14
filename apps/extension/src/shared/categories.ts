@@ -12,6 +12,7 @@ import {
   Pill,
   Search,
   ShoppingCart,
+  Shuffle,
   Swords,
   TriangleAlert,
   Users,
@@ -20,22 +21,23 @@ import {
 } from "lucide-react";
 import type { WebCategory } from "@eguard/schemas";
 
-/** Every category a family can block, in the order the settings page lists them. */
+/** Every category a family can block, with the web dashboard's labels and order (~/eguard CATEGORY_META). */
 export const CATEGORIES: { id: WebCategory; label: string; Icon: LucideIcon }[] = [
   { id: "ADULT", label: "Adult content", Icon: CircleSlash },
-  { id: "VIOLENCE", label: "Violence", Icon: Swords },
   { id: "GAMBLING", label: "Gambling", Icon: Dices },
-  { id: "DATING", label: "Dating", Icon: Heart },
-  { id: "HATE", label: "Hate and extremism", Icon: Flag },
+  { id: "MALWARE", label: "Malware", Icon: Bug },
+  { id: "PHISHING", label: "Phishing", Icon: VenetianMask },
+  { id: "VIOLENCE", label: "Violence", Icon: Swords },
+  { id: "DRUGS", label: "Drugs", Icon: Pill },
   { id: "WEAPONS", label: "Weapons", Icon: TriangleAlert },
-  { id: "DRUGS", label: "Drugs and substances", Icon: Pill },
+  { id: "HATE", label: "Hate & extremism", Icon: Flag },
+  { id: "DATING", label: "Dating", Icon: Heart },
   { id: "SOCIAL_MEDIA", label: "Social media", Icon: Users },
   { id: "GAMING", label: "Gaming", Icon: Gamepad2 },
   { id: "STREAMING", label: "Streaming", Icon: Clapperboard },
   { id: "SHOPPING", label: "Shopping", Icon: ShoppingCart },
   { id: "DOWNLOADS", label: "Downloads", Icon: Download },
-  { id: "MALWARE", label: "Harmful software", Icon: Bug },
-  { id: "PHISHING", label: "Phishing", Icon: VenetianMask },
+  { id: "PROXY", label: "Proxies & translators", Icon: Shuffle },
 ];
 
 const BY_ID = new Map<string, (typeof CATEGORIES)[number]>(CATEGORIES.map((c) => [c.id, c]));

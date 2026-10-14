@@ -56,11 +56,15 @@ Parents get a browser code with `POST /api/mobile/v1/children/:id/pairing-code` 
 
 `{ "installationId", "refreshToken" }` → `200 { accessToken, accessTokenExpiresAt, refreshToken }` · `401` revoked/unknown/reused.
 
-The `401` **must carry a code** saying why: `installation_revoked` (a parent removed the browser) or `token_reused` (a rotated-out token was presented after the 2-minute window, so eGuard disconnected it). The extension forgets its connection and removes its rules at once only for those two codes. Any other `401` from `/token` (`unauthorized`, or no body) counts only after `/token` has kept refusing for 10 minutes, so a server fault can't unpair every browser. _Server change needed in `~/eguard`: send these codes._
+The `401` **must carry a code** saying why, `installation_revoked` (a parent removed the browser) or `token_reused` (a rotated-out token was presented after its successor was used, so eGuard disconnected it), and eGuard's signed `revocation` (`{ revocation: { type: "eguard.browser.revoked", installationId, at }, signature, keyId }`, signed with the policy key over the canonical JSON of `revocation`). The extension forgets its connection and removes its rules only for those two codes with a revocation that verifies and names its installation. Any other `401` from `/token` never disconnects it: an unsigned answer could come from a proxy between the browser and eGuard.
+
+Every answer's `Date` header sets the extension's clock offset: approvals, "Continue" and focus hours end by eGuard's time.
 
 ### `GET /policy` (Bearer)
 
-`200 { "policy": BrowserProtectionPolicy, "signature": "<base64>", "keyId": "<16 hex>" }` · `401` for a removed browser · `503 signing_not_configured` if the server has no signing key (the extension keeps its last policy).
+`200 { "policy": BrowserProtectionPolicy, "signature": "<base64>", "keyId": "<16 hex>", "names": { familyName, childName, deviceName } }` · `401` for a removed browser · `503 signing_not_configured` if the server has no signing key (the extension keeps its last policy) · `429` after 120 reads in 15 minutes from one installation. "Sync now", "Run health check" and "Check again" are limited in the extension (`MANUAL_LIMITS`: 60 syncs per 15 minutes, 20 forced reports an hour) so a child pressing them can't use up these limits and hold back the parent's changes and alerts.
+
+- `names` (optional, outside the signature) are the names `/pair` returned, as they are now: a parent can rename the child or family. The extension updates the popup, options and block page from them; they're display text only.
 
 - `policy` is the child's current policy (created with age-based defaults the first time), with `installationId` set to the caller's and `schedule.timezone` set to the family's time zone.
 - `signature` is **ECDSA P-256 with SHA-256**, raw `r‖s` (64 bytes, IEEE P1363, what WebCrypto produces and verifies), over the UTF-8 **canonical JSON** of `policy`: object keys sorted at every level, arrays in order, no whitespace. Both repos test the same canonicalisation vector. P-256 rather than Ed25519 because WebCrypto only gained Ed25519 in Chrome 137 and the extension supports Chrome 120+.
@@ -85,11 +89,13 @@ The extension's own checks, each with a `CheckStatus`, the state the popup shows
     { "id": "sync_fresh", "status": "PASS" },
     { "id": "safe_browsing", "status": "PASS" },
     { "id": "force_installed", "status": "NOT_CONFIGURED" }
-  ]
+  ],
+  "extensionVersion": "0.1.3",
+  "browserVersion": "153.0.0.0"
 }
 ```
 
-`200 { ok: true, score, total }` (passing checks out of those that apply; `UNSUPPORTED` and `NOT_CONFIGURED` don't count) · `400 invalid_report` · `401` · `429` after 60 reports an hour. Unknown check ids are dropped, so a newer extension can add checks.
+`extensionVersion` / `browserVersion` (optional on the server) keep the versions parents see current after an update; a change is reported at once. `200 { ok: true, score, total }` (passing checks out of those that apply; `UNSUPPORTED` and `NOT_CONFIGURED` don't count) · `400 invalid_report` · `401` · `429` after 60 reports an hour. Unknown check ids are dropped, so a newer extension can add checks.
 
 | Check              | PASS                                          | Otherwise                                                                                                                  |
 | ------------------ | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -108,13 +114,14 @@ The server stores each report (`BrowserHealthCheck`), sets `BrowserInstallation.
 | `BROWSER_DRIFT:<id>`         | "Browser protection changed": `rules_installed` fails, or `policyVersion` is below the current one more than 15 minutes after the change (a change in flight isn't drift) | a report on the current version with rules in place |
 | `BROWSER_PRIVATE:<id>`       | "Private windows aren't protected": `private_windows` is `WARNING`                                                                                                        | it passes                                           |
 | `BROWSER_SAFE_BROWSING:<id>` | "Malware and phishing protection is off": `safe_browsing` is `ACTION_REQUIRED`                                                                                            | any other status                                    |
-| `BROWSER_OFFLINE:<id>`       | "eGuard can't verify this browser" (category `DEVICES`): no contact for 24 hours (`OFFLINE_AFTER_MS`), raised by the maintenance job                                      | any authenticated request                           |
+| `BROWSER_SITE_ACCESS:<id>`   | "SafeSearch is off in this browser": `site_access` is `ACTION_REQUIRED` (if eGuard's own address was withdrawn too, the report can't arrive; `BROWSER_OFFLINE` covers it) | any other status                                    |
+| `BROWSER_OFFLINE:<id>`       | "eGuard may be off in this browser" (category `DEVICES`): no contact for 24 hours (`OFFLINE_AFTER_MS`), raised by the maintenance job                                     | any authenticated request                           |
 
 Removing the browser resolves all of them. The web app's alert button opens the child's Browser tab.
 
 ### `POST /access-requests`, `GET /access-requests` (Bearer)
 
-`POST { "domain": "www.roblox.com", "reason": "School project" }` (the host the child tried; `reason` optional, up to 280 characters) → `201 { request }`, or `200` with the open request if one is already pending for that site. `400 invalid_domain` · `429` after 10 new requests an hour from one browser. Creates an `ATTENTION` alert "Website access request" (`resolveKey WEBREQ:<id>`, its action opens the child's Browser tab). `GET` returns this browser's last 20 requests: `{ requests: [{ id, domain, reason, status: PENDING|APPROVED|DENIED, duration, expiresAt, createdAt, decidedAt }] }`, which the block page uses for "waiting for a parent" / "a parent said no".
+`POST { "domain": "www.roblox.com", "reason": "School project" }` (the host the child tried; `reason` optional, up to 280 characters) → `201 { request }`, or `200` with the open request if one is already pending for that site. `400 invalid_domain` · `429` after 10 new requests an hour from one browser. Creates an `ATTENTION` alert "Website access request" (`resolveKey WEBREQ:<id>`, its action opens the child's Browser tab). `GET` returns this browser's last 20 requests: `{ requests: [{ id, domain, reason, status: PENDING|APPROVED|DENIED, duration, expiresAt, createdAt, decidedAt }] }`, which the block page uses for "waiting for a parent" / "a parent said no". `429` after 300 reads in 15 minutes from one browser; the worker shares one copy among open block pages for 15 seconds and keeps the last answer when a read is refused.
 
 Parents answer with `POST /api/mobile/v1/browser-access-requests/:id` `{ "decision": "APPROVE", "duration": "15M" | "1H" | "TODAY" | "ALWAYS" }` or `{ "decision": "DENY" }` (or on the web Browser tab). `409 already_decided` for a second answer. Approval is a **new policy version**: `ALWAYS` adds the site to `allowedDomains` (and removes it from `blockedDomains`); the others add `{ domain, until }` to the policy's `temporaryAllows` (`TODAY` = midnight in the family's time zone). Expired entries are ignored by the extension and dropped on the next change. Audit: `browser.access.approved` / `browser.access.denied`.
 

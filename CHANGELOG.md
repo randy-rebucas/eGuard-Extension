@@ -3,6 +3,73 @@
 All notable changes to the eGuard browser extension. Versions match `apps/extension/package.json` and the store
 uploads in `release/`.
 
+## 0.1.4 (2026-10-14)
+
+- **YouTube Restricted Mode.** The policy's new `youtubeRestrict` (`MODERATE` / `STRICT`) sets YouTube's own
+  `YouTube-Restrict` request header on its page, embed and API hosts, above every allow rule. **New host permissions**
+  for `*.youtube.com`, `*.youtube-nocookie.com`, `youtubei.googleapis.com` and `youtube.googleapis.com`: an update
+  from a store waits until someone accepts them (Chrome and Edge turn the extension off meanwhile), and the parent
+  sees "eGuard may be off in this browser" after a day. Force-installed copies get them without asking. Shown on the
+  Options page. (`policy-engine/src/rules.ts`, `config/manifest.ts`)
+- **Proxies & translators category.** `PROXY` gets its label and icon (older builds already blocked it, as "Other").
+- **Store listing.** Firefox for Android is no longer listed (`gecko_android` removed: untested, and every text says
+  "computer"). The child's typed request reason is declared as personal communications (Chrome form, Firefox
+  `personalCommunications`).
+- **An approved site opened a more specific blocked one.** Approving `example.com` also opened a separately blocked
+  `games.example.com`. Approvals now rank like allowed sites: the more specific blocked site stays blocked.
+  (`packages/policy-engine/src/evaluate.ts`, `rules.ts`)
+- **Buttons a child can press over and over no longer hold back the parent.** eGuard now limits each browser's policy
+  reads (120 per 15 minutes), health reports (60 an hour) and access-request reads (300 per 15 minutes). "Sync now",
+  "Check again" and "Run health check" reach eGuard at most 60 times per 15 minutes (syncs) and 20 times an hour
+  (forced reports), counted in session storage; past that, the checks still run here and a changed result is still
+  reported. "Check again" after a parent's answer always syncs. Open block pages share one list of requests (15 s), and
+  a refused read keeps the last answer, so a waiting request no longer flips back to "Ask a parent". (`service.ts`)
+- **Fewer retries while offline, and the clock offset first.** When the 5-minute sync can't reach eGuard, the health
+  report and daily counts wait instead of retrying the sign-in twice more. Every event waits for the saved clock offset,
+  so a restart doesn't use the computer's clock for its first minute. (`service.ts`, `index.ts`)
+- **Options page.** YouTube Moderate and Strict are described as on the dashboard. The capability list has a YouTube Restricted Mode row, and Safe Search says other engines'
+  searches are blocked.
+- **Versions and names stay current.** Health reports carry `extensionVersion` and `browserVersion`; the child,
+  family and device names follow renames from the policy response's `names`.
+
+### Security (2026-10-13 audit)
+
+- **"Continue" on a warned search engine turned SafeSearch off.** With other websites on "Warn first", no SafeSearch
+  redirect is compiled for an engine the policy only warns about, and Continue's allow rule then opened every search
+  unfiltered. Continue now brings that engine's redirect with it (session rule, priority 110). (`enforcement.ts`)
+- **A trailing dot got past SafeSearch.** `www.google.com./search` reached Google but matched no redirect. Searches on
+  the enforced engines written with a trailing dot are blocked; blocked sites and categories already held (Chromium's
+  `requestDomains` matches them, checked in e2e). (`policy-engine/src/search.ts`)
+- **Other search engines ran unfiltered with SafeSearch on.** Searches on Yahoo, Brave, Yandex, Ecosia, Startpage and
+  Qwant are blocked while SafeSearch is on (no new host permissions), as Google's country domains already were; Bing's
+  country hosts (`cn.bing.com`) get SafeSearch. The block page names the engines the family's settings let the child
+  use, or none.
+- **An unsigned 401 could switch protection off.** `/token` answering `installation_revoked` (or any 401 for 10
+  minutes) removed every rule, so a proxy with its own root certificate could unpair even a force-installed browser.
+  The extension now disconnects only on eGuard's signed revocation (policy key); any other 401 keeps the rules on.
+  Needs the server change that sends `revocation`. (`token-manager.ts`)
+- **Moving the clock back stretched approvals, "Continue" and focus hours.** Time limits now use eGuard's clock (the
+  `Date` header's offset, kept across restarts); token expiry too.
+- **Rollback after a discarded policy.** The highest accepted policy version is kept apart from the stored policy, so
+  an older signed policy is still refused after the stored one stops verifying.
+
+### Fixed
+
+- A refused policy (bad signature, older version) and a refused sign-in read "Protection active" and "Up to date".
+  Any failed sync now shows Sync paused, titled by what failed. Rules not in place read Action required (nothing may be
+  blocked), as the parent's card says.
+- New category lists never reached a browser whose policy version hadn't changed: a same-version policy whose content
+  differs is taken.
+- The block page: category labels as the web dashboard's; "a parent allowed this before" no longer claims the time
+  ended; a first-load error offers Go back and Try again; a request whose list didn't load no longer offers "Ask a
+  parent" again. Focus-hours times read "9:00 PM" in the popup and options as on the block page.
+- Options: "What your family's settings ask for" (the switches are the settings, Health says what's in place); level
+  names "Allow / Warn first / Allowed only" as the dashboard; "off" when not connected; long names wrap.
+- Onboarding: the dashboard's steps (name this computer, Get pairing code), an 8-character code, "within 15 minutes";
+  the Verify step shows errors and "Check again" while something needs a parent.
+- Sync paused shows "!" on the toolbar icon (it looked the same as Protected).
+- `npm run build` refuses a non-production `.env` for `dist/` (the store packages) unless `--dev-env` is passed.
+
 ## 0.1.3 — 2026-10-03
 
 Security release with the fixes from the 2026-10-03 audit. No new permissions and no new data collected: the manifest

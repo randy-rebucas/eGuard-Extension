@@ -189,6 +189,12 @@ The only server the extension talks to. Used for pairing with the family account
 SafeSearch: redirect rules add the search engine's own safe-search parameter (safe=active, adlt=strict, kp=1) to searches on these sites. Search queries and results are not read.
 ```
 
+**Host permissions: youtube.com, youtube-nocookie.com, youtubei.googleapis.com, youtube.googleapis.com**
+
+```text
+YouTube Restricted Mode: when the family turns it on, a rule adds YouTube's own YouTube-Restrict request header (the network setting Google documents for schools and families) to requests to these hosts. Pages, videos and searches on YouTube are not read.
+```
+
 **Remote code** (Chrome asks): **No**. All code ships in the package. The policy is signed data, not code.
 
 ### Install warnings
@@ -197,7 +203,7 @@ Users see these when installing. The description should explain them, as it does
 
 - "Block content on any page" (`declarativeNetRequest`)
 - "Read your browsing history" (Chrome's wording for `webNavigation`; eGuard keeps no history)
-- "Read and change your data on" the search sites (SafeSearch)
+- "Read and change your data on" the search sites (SafeSearch) and YouTube (Restricted Mode)
 - Chrome only: "Change your privacy-related settings" (`privacy`)
 
 Adding a permission in a later version disables the extension for existing users until they accept the new warning. Avoid it, or plan for it. See SECURITY.md.
@@ -208,19 +214,20 @@ What eGuard's servers receive, from [PRIVACY.md](PRIVACY.md#what-is-sent-to-egua
 
 | Data                                                     | When                          |
 | -------------------------------------------------------- | ----------------------------- |
-| Browser name and version, extension version, OS type     | Pairing, and on sync          |
+| Browser name and version, extension version, OS type     | Pairing, and health reports   |
 | Protection state, policy version, health-check results   | On change, hourly, on request |
 | Pages blocked per day per category (never which sites)   | Once a day, for finished days |
 | An access request: one site address and the reason typed | Only when the child sends one |
 
-Before submitting, product and legal must agree on how each row maps to the store categories below. The mapping below is a recommendation, not settled.
+The mapping below was agreed on 2026-10-13: web history and personal communications are declared.
 
 ### 6.1 Chrome Web Store: Privacy practices tab
 
 Recommended selections:
 
 - **Web history:** yes. An access request contains the address of the site the child asks for, and the daily counts describe blocked browsing by category. Declaring it is the conservative reading; leaving it out risks rejection for under-disclosure.
-- **Website content, user activity, personal communications, location, financial, health, authentication info, personally identifiable information:** no. The extension doesn't collect them. The installation credential is the extension's own, not the user's login.
+- **Personal communications:** yes. The reason a child may type on an access request is a message to their parent (decided 2026-10-13).
+- **Website content, user activity, location, financial, health, authentication info, personally identifiable information:** no. The extension doesn't collect them. The installation credential is the extension's own, not the user's login.
 
 Certify all three:
 
@@ -240,14 +247,15 @@ AMO rejects new extensions without `browser_specific_settings.gecko.data_collect
 "gecko": {
   "id": "browser-extension@eguard.family",
   "strict_min_version": "140.0",
-  "data_collection_permissions": { "required": ["browsingActivity"] }
-},
-"gecko_android": { "strict_min_version": "142.0" }
+  "data_collection_permissions": { "required": ["browsingActivity", "personalCommunications"] }
+}
 ```
 
 - **`browsingActivity`, required:** an access request sends the address of the site the child asks for, and the daily counts are blocked pages per category.
+- **`personalCommunications`, required:** the reason the child may type on an access request is a message to their parent.
+- **No `gecko_android`:** without it AMO doesn't list the add-on for Firefox for Android, which isn't tested and whose texts all say "computer". Add it back (`strict_min_version` 142, the first Android version to read the data-collection field) once it is.
 - **Not declared, `technicalAndInteraction`:** Firefox only allows it as optional, meaning the person could decline it. Browser and OS details and health-check results are how the service works (the parent's status and alerts), not usage telemetry, so they aren't declared under it. If product or legal read it the other way, health reporting has to become optional in Firefox (checked with `browser.permissions.contains({ data_collection: [...] })`).
-- **Minimum versions:** Firefox reads this field from 140 on desktop and 142 on Android, so those are the minimums (`MIN_VERSION.firefox` in `packages/browser-adapter/src/detect.ts` feeds the manifest). 140 is an ESR release.
+- **Minimum versions:** Firefox reads this field from 140 on desktop, so that is the minimum (`MIN_VERSION.firefox` in `packages/browser-adapter/src/detect.ts` feeds the manifest). 140 is an ESR release.
 
 Check the package with Mozilla's validator before uploading: `npx addons-linter release/eguard-firefox-<version>.zip` must report 0 errors and 0 warnings. The "Function constructor is eval" and "Unsafe assignment to innerHTML" warnings, which AMO lists as possible grounds for rejection, came from Zod and React DOM. `apps/extension/scripts/amo-safe.ts` removes them at build time and fails a production build if either comes back (for example after a library upgrade).
 

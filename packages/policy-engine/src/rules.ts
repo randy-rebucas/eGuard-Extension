@@ -3,10 +3,16 @@ import { categoryIndex } from "./categories.ts";
 import { labelCount } from "./domain.ts";
 import { evaluateUrl } from "./evaluate.ts";
 import { isScheduleActive } from "./schedule.ts";
-import { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCH } from "./search.ts";
+import { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCHES } from "./search.ts";
 import { canonicalJson } from "./signature.ts";
 
-export { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCH, unsupportedSearch } from "./search.ts";
+export {
+  SAFE_SEARCH_ENGINES,
+  UNSUPPORTED_SEARCHES,
+  engineDomain,
+  safeSearchEnginesFor,
+  unsupportedSearch,
+} from "./search.ts";
 
 /**
  * Compiles a verified policy into declarativeNetRequest rules: the browser matches them itself, so eGuard never
@@ -14,17 +20,18 @@ export { SAFE_SEARCH_ENGINES, UNSUPPORTED_SEARCH, unsupportedSearch } from "./se
  * need access to every site); the worker shows the block page when the browser reports the blocked load.
  *
  * Priorities encode evaluateUrl()'s order (highest wins):
- *   110 SafeSearch redirect, only on search engines the policy lets the child open; and a block of searches on
- *       engines where SafeSearch can't be enforced
- *   100 allow: parent-approved (temporary) sites, eGuard's own web app
- *   54–91 the parent's allowed and blocked sites, by specificity (listPriority): a more specific rule wins, and
- *       allowed wins a tie
+ *   110 SafeSearch redirect, only on search engines the policy lets the child open (a warned one gets it with
+ *       "Continue"); blocks of searches on engines where SafeSearch can't be enforced; and the YouTube Restricted
+ *       Mode header (a header rule below a matching allow rule would be skipped, so it ranks above every allow)
+ *   100 allow: eGuard's own web app
+ *   54–91 the parent's allowed, approved (temporary) and blocked sites, by specificity (listPriority): a more
+ *       specific rule wins, and allowed wins a tie
  *    40 block: blocked categories
  *    10 block every other web page: "other websites" is WARN/BLOCK, or focus hours are on
  * "Continue" on a warning adds a session allow rule for that exact host at 100 (enforcement.ts, not compiled here).
  */
 
-export type ResourceType = "main_frame" | "sub_frame";
+export type ResourceType = "main_frame" | "sub_frame" | "xmlhttprequest";
 
 export type DnrRule = {
   id: number;
@@ -34,7 +41,8 @@ export type DnrRule = {
     | {
         type: "redirect";
         redirect: { transform: { queryTransform: { addOrReplaceParams: { key: string; value: string }[] } } };
-      };
+      }
+    | { type: "modifyHeaders"; requestHeaders: { header: string; operation: "set"; value: string }[] };
   condition: {
     requestDomains?: string[];
     excludedRequestDomains?: string[];
@@ -69,12 +77,10 @@ export function compileRules(policy: BrowserProtectionPolicy, opts: CompileOptio
     rules.push({ id: id++, priority, action, condition });
 
   const nowMs = opts.now.getTime();
-  const alwaysOpen = [
-    ...policy.temporaryAllows.filter((t) => Date.parse(t.until) > nowMs).map((t) => t.domain),
-    ...(opts.alwaysAllow ?? []),
-  ];
+  const alwaysOpen = opts.alwaysAllow ?? [];
   if (alwaysOpen.length)
     add(PRIORITY.allow, { type: "allow" }, { requestDomains: sorted(alwaysOpen), resourceTypes: FRAMES });
+  const temporary = policy.temporaryAllows.filter((t) => Date.parse(t.until) > nowMs).map((t) => t.domain);
 
   // One rule per (action, specificity), most specific first
   const lists = new Map<number, { kind: "allow" | "block"; domains: string[] }>();
@@ -86,7 +92,8 @@ export function compileRules(policy: BrowserProtectionPolicy, opts: CompileOptio
       lists.set(p, group);
     }
   };
-  put("allow", policy.allowedDomains);
+  // Approved sites rank as allowed ones: a more specific blocked site still wins (evaluateUrl does the same)
+  put("allow", [...policy.allowedDomains, ...temporary]);
   put("block", policy.blockedDomains);
   for (const [priority, { kind, domains }] of [...lists].sort(([a], [b]) => b - a)) {
     add(priority, { type: kind }, { requestDomains: sorted(domains), resourceTypes: FRAMES });
@@ -105,30 +112,83 @@ export function compileRules(policy: BrowserProtectionPolicy, opts: CompileOptio
   if (policy.safeSearch) {
     const categoryOf = categoryIndex(policy);
     for (const engine of SAFE_SEARCH_ENGINES) {
-      // Never let a SafeSearch redirect (priority 110) open a search engine the policy blocks or only warns about
+      // Never let a SafeSearch redirect (priority 110) open a search engine the policy blocks or only warns about.
+      // A warned engine gets its redirect with the child's "Continue" (enforcement.ts, safeSearchRule).
       const reachable =
         evaluateUrl(policy, `https://${engine.host}/`, { now: opts.now, categoryOf }).decision === "ALLOW";
       if (!reachable) continue;
+      const r = safeSearchRule(engine, 0);
+      add(r.priority, r.action, r.condition);
+    }
+    for (const u of UNSUPPORTED_SEARCHES) {
       add(
         PRIORITY.safeSearch,
+        { type: "block" },
         {
-          type: "redirect",
-          redirect: { transform: { queryTransform: { addOrReplaceParams: [engine.param] } } },
+          regexFilter: u.regexFilter,
+          ...(u.excludedRequestDomains ? { excludedRequestDomains: u.excludedRequestDomains } : {}),
+          resourceTypes: ["main_frame"],
         },
-        { regexFilter: engine.regexFilter, resourceTypes: ["main_frame"] },
       );
     }
+  }
+
+  const restrict = youtubeRestrictHeader(policy);
+  if (restrict) {
     add(
       PRIORITY.safeSearch,
-      { type: "block" },
       {
-        regexFilter: UNSUPPORTED_SEARCH.regexFilter,
-        excludedRequestDomains: UNSUPPORTED_SEARCH.excludedRequestDomains,
-        resourceTypes: ["main_frame"],
+        type: "modifyHeaders",
+        requestHeaders: [{ header: YOUTUBE_RESTRICT_HEADER, operation: "set", value: restrict }],
       },
+      { requestDomains: [...YOUTUBE_DOMAINS], resourceTypes: ["main_frame", "sub_frame", "xmlhttprequest"] },
     );
   }
   return rules;
+}
+
+/**
+ * YouTube Restricted Mode: YouTube honours this request header on these hosts (Google's documented list for
+ * network-enforced Restricted Mode). Setting a header needs host access to each, unlike a plain block.
+ */
+export const YOUTUBE_RESTRICT_HEADER = "YouTube-Restrict";
+export const YOUTUBE_DOMAINS = [
+  "youtube.com",
+  "youtube-nocookie.com",
+  "youtubei.googleapis.com",
+  "youtube.googleapis.com",
+] as const;
+
+/**
+ * The header value for the policy's `youtubeRestrict`, or null when it's off or not sent (older servers). A
+ * level this build doesn't know is enforced as Strict, the way an unknown "other websites" mode is enforced as BLOCK.
+ */
+export function youtubeRestrictHeader(policy: BrowserProtectionPolicy): "Moderate" | "Strict" | null {
+  const level = policy.youtubeRestrict;
+  if (level === undefined || level === "OFF") return null;
+  return level === "MODERATE" ? "Moderate" : "Strict";
+}
+
+/**
+ * A regex (for a session rule) that opens exactly `host` (any port and path), not its subdomains: requestDomains would also
+ * match every subdomain, so "Continue" on example.com would open a blocked games.example.com, and on a bare
+ * suffix like "com" every .com site.
+ */
+export function exactHostFilter(host: string): string {
+  return `^https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(:[0-9]+)?([/?#]|$)`;
+}
+
+/** The SafeSearch redirect for one engine, at the priority that beats every allow rule. */
+export function safeSearchRule(engine: (typeof SAFE_SEARCH_ENGINES)[number], id: number): DnrRule {
+  return {
+    id,
+    priority: PRIORITY.safeSearch,
+    action: {
+      type: "redirect",
+      redirect: { transform: { queryTransform: { addOrReplaceParams: [engine.param] } } },
+    },
+    condition: { regexFilter: engine.regexFilter, resourceTypes: ["main_frame"] },
+  };
 }
 
 function sorted(list: string[]) {
@@ -142,7 +202,11 @@ function sorted(list: string[]) {
 export function ruleFingerprint(r: {
   id: number;
   priority?: number;
-  action: { type: string; redirect?: unknown };
+  action: {
+    type: string;
+    redirect?: unknown;
+    requestHeaders?: { header: string; operation: string; value?: string }[];
+  };
   condition: {
     requestDomains?: string[];
     excludedRequestDomains?: string[];
@@ -154,7 +218,17 @@ export function ruleFingerprint(r: {
   return canonicalJson({
     id: r.id,
     priority: r.priority ?? 1,
-    action: { type: r.action.type, redirect: withoutDefaults(r.action.redirect) ?? null },
+    action: {
+      type: r.action.type,
+      redirect: withoutDefaults(r.action.redirect) ?? null,
+      // Header names are case-insensitive; a browser may store them in another case
+      requestHeaders:
+        r.action.requestHeaders?.map((h) => ({
+          header: h.header.toLowerCase(),
+          operation: h.operation,
+          value: h.value ?? null,
+        })) ?? null,
+    },
     condition: {
       requestDomains: r.condition.requestDomains ? [...r.condition.requestDomains].sort() : null,
       excludedRequestDomains: r.condition.excludedRequestDomains?.length

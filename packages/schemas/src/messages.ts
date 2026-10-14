@@ -18,8 +18,11 @@ export const BlockReason = z.discriminatedUnion("type", [
   z.object({ type: z.literal("CATEGORY"), category: z.string() }),
   z.object({ type: z.literal("FOCUS_HOURS"), until: z.string() }),
   z.object({ type: z.literal("UNKNOWN_SITE") }),
-  /** A search on an engine where eGuard can't turn on SafeSearch */
-  z.object({ type: z.literal("SAFE_SEARCH") }),
+  /**
+   * A search on an engine where eGuard can't turn on SafeSearch. `engines`: the ones where it works and the
+   * family's settings let the child search (none: the page doesn't send them anywhere).
+   */
+  z.object({ type: z.literal("SAFE_SEARCH"), engines: z.array(z.string()).optional() }),
 ]);
 
 /** What the block page shows. Built by the worker from the verified policy. */

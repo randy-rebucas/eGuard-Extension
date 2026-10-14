@@ -37,7 +37,8 @@ export function otherSitesDecision(policy: BrowserProtectionPolicy): Decision {
  * What the policy says about one URL. Order:
  * a search on an engine eGuard can't enforce SafeSearch on (when SafeSearch is on) → allowed site, unless a
  * blocked site is more specific (allowed example.com, blocked games.example.com: games.example.com is blocked; a
- * tie goes to allowed) → parent-approved (temporary) site → blocked site → blocked category → focus hours → the
+ * tie goes to allowed) → parent-approved (temporary) site, by the same rule → blocked site → blocked category →
+ * focus hours → the
  * "other websites" rule. Allowed sites beat categories, so a parent can always make an exception inside a blocked category.
  * compileRules() encodes the same order as rule priorities; a test keeps the two in step.
  */
@@ -59,7 +60,8 @@ export function evaluateUrl(policy: BrowserProtectionPolicy, url: string, opts: 
     host,
     temporary.map((t) => t.domain),
   );
-  if (tempRule) {
+  // Ranked like an allowed site: approving example.com doesn't open a more specific blocked games.example.com
+  if (tempRule && (!blocked || labelCount(tempRule) >= labelCount(blocked))) {
     // The latest end, if the same site was approved more than once
     const until = temporary
       .filter((t) => t.domain === tempRule)

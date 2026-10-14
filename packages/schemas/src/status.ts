@@ -7,6 +7,8 @@ import { CategoryKey, UnknownSitesPolicy } from "./policy.ts";
 export const PolicySummary = z.object({
   safeSearch: z.boolean(),
   safeBrowsing: z.boolean(),
+  /** YouTube Restricted Mode as enforced (an unknown level shows as the STRICT it's enforced as). */
+  youtubeRestrict: z.enum(["OFF", "MODERATE", "STRICT"]),
   blockedCategories: z.number().int(),
   /** Which categories the family blocks: kinds of site, never sites. */
   categories: z.array(CategoryKey),

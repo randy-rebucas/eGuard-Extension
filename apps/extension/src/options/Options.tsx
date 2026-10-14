@@ -18,11 +18,12 @@ import {
   ShieldHalf,
   ShieldPlus,
   UserRound,
+  TvMinimalPlay,
   type LucideIcon,
 } from "lucide-react";
 import type { PolicySummary, ProtectionStatus } from "@eguard/schemas";
 import { useStatus } from "../shared/status-store.ts";
-import { browserLabel, relativeTime } from "../shared/format.ts";
+import { browserLabel, clockTime, relativeTime } from "../shared/format.ts";
 import { CATEGORIES } from "../shared/categories.ts";
 import { CapabilityList } from "../shared/CapabilityList.tsx";
 import { HealthList, scoreLabel } from "../shared/HealthList.tsx";
@@ -95,7 +96,11 @@ export function Options() {
           {status ? (
             <>
               <Overview status={status} />
-              <Section title="Web protection" id="protection" hint="What eGuard applies in this browser.">
+              <Section
+                title="Web protection"
+                id="protection"
+                hint="What your family's settings ask for. Health, below, says what this browser has in place."
+              >
                 <ProtectionPanel status={status} s={s} />
               </Section>
               <Section
@@ -135,7 +140,9 @@ export function Options() {
               <Privacy />
             </>
           ) : (
-            <div className="h-48 animate-pulse rounded-[14px] bg-surface-3" aria-label="Loading" />
+            <div role="status" className="h-48 animate-pulse rounded-[14px] bg-surface-3">
+              <span className="sr-only">Loading</span>
+            </div>
           )}
         </main>
       </div>
@@ -241,7 +248,7 @@ function Overview({ status }: { status: ProtectionStatus }) {
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
             <dt className="text-ink-3">{k}</dt>
-            <dd className="font-medium">{v}</dd>
+            <dd className="min-w-0 font-medium break-words">{v}</dd>
           </div>
         ))}
       </dl>
@@ -266,12 +273,17 @@ const LEVELS: {
 }[] = [
   {
     id: "ALLOW",
-    title: "Balanced",
-    body: "Blocks the categories and websites your family chose",
+    title: "Allow",
+    body: "Other websites open normally. Blocked categories and sites still apply",
     Icon: ShieldHalf,
   },
-  { id: "WARN", title: "Cautious", body: "Asks first before opening a new website", Icon: Scale },
-  { id: "BLOCK", title: "Strict", body: "Only websites on the allowed list open", Icon: ShieldPlus },
+  {
+    id: "WARN",
+    title: "Warn first",
+    body: "Other websites show a notice first; your child can continue",
+    Icon: Scale,
+  },
+  { id: "BLOCK", title: "Allowed only", body: "Only websites on the allowed list open", Icon: ShieldPlus },
 ];
 
 function ProtectionPanel({ status, s }: { status: ProtectionStatus; s: PolicySummary | null }) {
@@ -290,7 +302,7 @@ function ProtectionPanel({ status, s }: { status: ProtectionStatus; s: PolicySum
         </span>
         <div className="min-w-0 flex-1">
           <p className={`font-display text-base font-semibold ${on ? "text-ok-ink" : ""}`}>
-            Web protection is {on ? "on" : "not fully on"}
+            Web protection is {on ? "on" : status.connection.paired ? "not fully on" : "off"}
           </p>
           <p className="mt-0.5 text-sm text-ink-2">{status.summary}</p>
         </div>
@@ -344,6 +356,19 @@ function ProtectionPanel({ status, s }: { status: ProtectionStatus; s: PolicySum
               on={s.safeSearch}
             />
             <Feature
+              Icon={TvMinimalPlay}
+              title="YouTube Restricted Mode"
+              body={
+                // The dashboard's wording for each level (~/eguard YOUTUBE_RESTRICT_META)
+                s.youtubeRestrict === "STRICT"
+                  ? "Strict: hides more videos than Moderate, including some that are fine"
+                  : s.youtubeRestrict === "MODERATE"
+                    ? "Moderate: hides videos that may be mature, and all comments"
+                    : "Hides videos that may be mature on YouTube"
+              }
+              on={s.youtubeRestrict !== "OFF"}
+            />
+            <Feature
               Icon={ShieldAlert}
               title="Block adult content"
               body="Keeps adult websites from opening"
@@ -354,7 +379,7 @@ function ProtectionPanel({ status, s }: { status: ProtectionStatus; s: PolicySum
               title="Focus hours"
               body={
                 s.focusHours
-                  ? `Only allowed websites open ${s.focusHours.startTime}–${s.focusHours.endTime}${s.focusHours.activeNow ? " (now)" : ""}`
+                  ? `Only allowed websites open ${clockTime(s.focusHours.startTime)}–${clockTime(s.focusHours.endTime)}${s.focusHours.activeNow ? " (now)" : ""}`
                   : "Only allowed websites open during set hours"
               }
               on={!!s.focusHours}
@@ -480,7 +505,8 @@ function Privacy() {
       <h3 className="mt-5 mb-1.5 text-[13px] font-semibold text-ink-2">What eGuard sends to its servers</h3>
       <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-ink-2">
         <li>
-          Browser name and version, eGuard version and operating system type, when the browser is connected.
+          Browser name and version, eGuard version and operating system type: when the browser is connected,
+          and the versions again with each health report (so a parent sees updates).
         </li>
         <li>Protection status and health-check results: which checks pass, never what was browsed.</li>
         <li>

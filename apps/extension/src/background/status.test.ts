@@ -36,8 +36,8 @@ describe("deriveStatus", () => {
 
   it("never reports PROTECTED when the rules aren't verified", () => {
     const s = deriveStatus(input({ rulesVerified: false }));
-    expect(s.state).toBe("NEEDS_ATTENTION");
-    expect(s.issues[0]).toMatchObject({ id: "rules-not-active", status: "WARNING" });
+    expect(s.state).toBe("ACTION_REQUIRED");
+    expect(s.issues[0]).toMatchObject({ id: "rules-not-active", status: "ACTION_REQUIRED" });
   });
 
   it("asks for connection when the browser isn't paired", () => {
@@ -88,17 +88,28 @@ describe("deriveStatus", () => {
     expect(s.state).toBe("SYNC_PAUSED");
   });
 
-  it("does not call a rejected policy 'offline'", () => {
+  it("isn't PROTECTED while newer settings are refused, and says so rather than 'offline'", () => {
     const s = deriveStatus(
       input({
         sync: {
           lastAttemptAt: ago(0),
           lastSuccessAt: ago(60_000),
-          lastError: { kind: "invalid_response", message: "bad", at: ago(0) },
+          lastError: { kind: "refused", message: "bad", at: ago(0) },
         },
       }),
     );
-    expect(s.state).toBe("PROTECTED");
+    expect(s.state).toBe("SYNC_PAUSED");
+    expect(s.issues[0]).toMatchObject({ title: "Couldn't accept new family settings", detail: "bad" });
+    const unauthorized = deriveStatus(
+      input({
+        sync: {
+          lastAttemptAt: ago(0),
+          lastSuccessAt: ago(60_000),
+          lastError: { kind: "unauthorized", message: "x", at: ago(0) },
+        },
+      }),
+    );
+    expect(unauthorized.state).toBe("SYNC_PAUSED");
   });
 
   it("reports unsupported browsers without claiming anything", () => {

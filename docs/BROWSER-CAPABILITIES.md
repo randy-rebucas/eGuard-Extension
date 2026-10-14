@@ -22,6 +22,7 @@ A ✓ marks a cell validated by running it in that browser. **No cell is validat
 | Allowed sites | Automatic | Automatic | Automatic | Unsupported |
 | Blocked categories | Automatic | Automatic | Automatic | Unsupported |
 | Safe Search | Automatic | Automatic | Automatic | Unsupported |
+| YouTube Restricted Mode | Automatic | Automatic | Automatic | Unsupported |
 | Browser malware & phishing protection | Automatic | Guided (not verifiable) | Guided (not verifiable) | Unsupported |
 | Protection in private windows | Guided + verified | Guided + verified | Guided + verified | Unsupported |
 | Scheduled protection | Automatic | Automatic | Automatic | Unsupported |
@@ -41,7 +42,9 @@ Brave, Opera and other Chromium browsers run the Chrome build and inherit Chrome
 - _Redirect_ rules (to show the eGuard block page) need host permission for the blocked site. To avoid asking for access to all sites, Phase 4 uses plain _block_ rules and then sends the tab to the block page after the browser reports `net::ERR_BLOCKED_BY_CLIENT` (via `webNavigation`). See [SECURITY.md](SECURITY.md#permissions).
 - Category coverage is only as good as eGuard's lists. The UI says so ("New sites may not be listed yet").
 
-**Safe Search.** A `declarativeNetRequest` redirect with a query transform adds `safe=active` (Google), `adlt=strict` (Bing), `kp=1` (DuckDuckGo). Requires host permission for those search domains only. This is _enforcement in this browser_, not a change to the child's search-engine account. Other search engines aren't covered; if the family blocks unknown sites they're blocked instead. Needs Phase 7 validation per engine, because engines change parameters.
+**Safe Search.** A `declarativeNetRequest` redirect with a query transform adds `safe=active` (Google), `adlt=strict` (Bing), `kp=1` (DuckDuckGo). Requires host permission for those search domains only. This is _enforcement in this browser_, not a change to the child's search-engine account. While SafeSearch is on, searches eGuard can't make safe are blocked with a plain block rule (no host access needed): Google's other country domains, the enforced engines written with a trailing dot, and Yahoo, Brave, Yandex, Ecosia, Startpage and Qwant. The block page names the engines the family's settings let the child use. Needs Phase 7 validation per engine, because engines change parameters.
+
+**YouTube Restricted Mode.** A `modifyHeaders` rule sets YouTube's own `YouTube-Restrict: Moderate|Strict` request header on youtube.com, youtube-nocookie.com, youtubei.googleapis.com and youtube.googleapis.com (pages, embeds and the player's API calls), ranked above every allow rule. Setting a header needs host permission for those hosts. It works whether or not the child is signed in to YouTube, in this browser only.
 
 **Browser malware & phishing protection.** Chrome exposes `chrome.privacy.services.safeBrowsingEnabled` (needs the `privacy` permission): eGuard can read and set it unless an enterprise policy controls it. Edge's SmartScreen and Firefox's "Block dangerous and deceptive content" have no extension API, so these are _Guided, not verifiable_. Independently, eGuard's own Malware/Phishing category lists apply in all three.
 

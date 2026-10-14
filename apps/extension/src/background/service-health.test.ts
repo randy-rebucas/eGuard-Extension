@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Handler } from "@eguard/api-client/testing";
 import type { BrowserInfo } from "@eguard/schemas";
 import { dayIn } from "./health.ts";
-import { KEEP_COUNTS_DAYS } from "./service.ts";
-import { NOW, harness, pairOk, policy, signed } from "./test-harness.ts";
+import { KEEP_COUNTS_DAYS, MANUAL_LIMITS } from "./service.ts";
+import { NOW, harness, pairOk, policy, removedAnswer, signed, tokenOk } from "./test-harness.ts";
 
 const PAIR = "/api/browser/v1/pair";
 const POLICY = "/api/browser/v1/policy";
@@ -28,7 +28,7 @@ async function paired(
 const reports = (h: Awaited<ReturnType<typeof paired>>) => h.calls.filter((c) => c.path === HEALTH);
 
 describe("health reports", () => {
-  it("go to eGuard right after pairing: state, policy version and each check's status, nothing else", async () => {
+  it("go to eGuard right after pairing: state, policy version, each check's status and the versions, nothing else", async () => {
     const h = await paired();
     expect(reports(h)).toHaveLength(1);
     expect(reports(h)[0]?.body).toEqual({
@@ -43,6 +43,8 @@ describe("health reports", () => {
         { id: "safe_browsing", status: "PASS" },
         { id: "force_installed", status: "NOT_CONFIGURED" },
       ],
+      extensionVersion: "0.1.0",
+      browserVersion: "153.0.0.0",
     });
     const s = await h.service.getStatus();
     expect(s.checks).toHaveLength(7);
@@ -67,10 +69,33 @@ describe("health reports", () => {
     expect(reports(h)).toHaveLength(3);
   });
 
-  it("a parent's Run health check always reports", async () => {
-    const h = await paired();
+  it("Run health check reports now; pressed over and over, only a changed result goes", async () => {
+    const h = await paired({ "/api/browser/v1/token": tokenOk });
+    const { max, windowMs } = MANUAL_LIMITS.report;
+    for (let i = 0; i < max; i++) await h.service.runHealthCheck();
+    expect(reports(h)).toHaveLength(1 + max);
+
     await h.service.runHealthCheck();
-    expect(reports(h)).toHaveLength(2);
+    expect(reports(h)).toHaveLength(1 + max);
+    h.setPrivateWindows(false);
+    await h.service.runHealthCheck();
+    expect(reports(h)).toHaveLength(2 + max);
+
+    h.advance(windowMs);
+    await h.service.runHealthCheck();
+    expect(reports(h)).toHaveLength(3 + max);
+  });
+
+  it("aren't attempted while eGuard can't be reached: the checks still run, the counts wait", async () => {
+    const h = await paired({
+      [POLICY]: [() => ({ status: 200, json: signed(policy(1)) }), () => "network-error"],
+    });
+    h.setPrivateWindows(false); // a change that would otherwise be reported at once
+    h.advance(60_000);
+    await h.service.periodic();
+    expect(reports(h)).toHaveLength(1);
+    expect(h.calls.filter((c) => c.path === EVENTS)).toHaveLength(0);
+    expect((await h.state.health.get())?.lastCheckAt).toBe(new Date(NOW + 60_000).toISOString());
   });
 
   it("one that couldn't be sent goes on the next check", async () => {
@@ -86,11 +111,27 @@ describe("health reports", () => {
   it("a report refused because the browser was removed forgets the connection", async () => {
     const h = await paired({
       [HEALTH]: [accepted, () => ({ status: 401, json: { error: "gone" } })],
-      "/api/browser/v1/token": () => ({ status: 401, json: { error: "gone", code: "installation_revoked" } }),
+      "/api/browser/v1/token": () => removedAnswer(),
     });
     await h.service.runHealthCheck();
     expect(await h.state.installation.get()).toBeNull();
     expect(await h.state.health.get()).toBeNull();
+  });
+});
+
+describe("names", () => {
+  it("follow a rename on the parent's side from the policy response, and stay without one", async () => {
+    const names = { familyName: "Cruz-Reyes family", childName: "Mia R.", deviceName: "Mia's MacBook" };
+    const h = await paired({
+      [POLICY]: [
+        () => ({ status: 200, json: signed(policy(1)) }),
+        () => ({ status: 200, json: { ...signed(policy(1)), names } }),
+      ],
+    });
+    expect((await h.state.installation.get())?.childName).toBe("Mia");
+    await h.service.syncPolicy();
+    expect(await h.state.installation.get()).toMatchObject(names);
+    expect((await h.service.getStatus()).connection).toMatchObject({ paired: true, childName: "Mia R." });
   });
 });
 

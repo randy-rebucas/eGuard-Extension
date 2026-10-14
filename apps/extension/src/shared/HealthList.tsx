@@ -24,7 +24,8 @@ export function HealthList({ checks, compact = false }: { checks: HealthCheck[];
         const explain = !compact || (c.status !== "PASS" && c.status !== "UNSUPPORTED");
         return (
           <li key={c.id} className={`flex items-start gap-2.5 ${compact ? "px-3 py-2" : "px-4 py-3"}`}>
-            <v.Icon className={`mt-0.5 size-4 shrink-0 ${TONE_CLASS[v.tone].fg}`} aria-label={v.label} />
+            <v.Icon className={`mt-0.5 size-4 shrink-0 ${TONE_CLASS[v.tone].fg}`} aria-hidden="true" />
+            <span className="sr-only">{v.label}:</span>
             <div className="min-w-0 flex-1">
               <p className={`${compact ? "text-[13px]" : "text-sm"} font-semibold`}>{c.title}</p>
               {explain ? (

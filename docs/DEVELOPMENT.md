@@ -10,17 +10,17 @@ cp .env.example .env        # points at the local eGuard app on http://localhost
 npm run dev                 # builds dist/chrome and rebuilds on change
 ```
 
-| Command                               | What it does                                                   |
-| ------------------------------------- | -------------------------------------------------------------- |
-| `npm run dev`                         | Watch-build the Chrome target into `dist/chrome`               |
-| `npm run build`                       | Production build of `dist/chrome`, `dist/edge`, `dist/firefox` |
-| `npm test`                            | Unit tests (Vitest)                                            |
-| `npm run test:e2e`                    | Build for the mock backend and run Playwright in Chromium      |
-| `npm run lint`                        | ESLint (typescript-eslint strict, type-checked)                |
-| `npm run typecheck`                   | `tsc -b` across all packages, plus the tool scripts            |
-| `npm run format`                      | Prettier                                                       |
-| `npm run icons -w @eguard/extension`  | Re-render toolbar icons from the logo                          |
-| `node scripts/sync-capability-doc.ts` | Regenerate the matrix in BROWSER-CAPABILITIES.md               |
+| Command                               | What it does                                                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`                         | Watch-build the Chrome target into `dist/chrome`                                                                                               |
+| `npm run build`                       | Production build of `dist/chrome`, `dist/edge`, `dist/firefox` (refuses a non-production `.env`; `npm run build -- --dev-env` to build anyway) |
+| `npm test`                            | Unit tests (Vitest)                                                                                                                            |
+| `npm run test:e2e`                    | Build for the mock backend and run Playwright in Chromium                                                                                      |
+| `npm run lint`                        | ESLint (typescript-eslint strict, type-checked)                                                                                                |
+| `npm run typecheck`                   | `tsc -b` across all packages, plus the tool scripts                                                                                            |
+| `npm run format`                      | Prettier                                                                                                                                       |
+| `npm run icons -w @eguard/extension`  | Re-render toolbar icons from the logo                                                                                                          |
+| `node scripts/sync-capability-doc.ts` | Regenerate the matrix in BROWSER-CAPABILITIES.md                                                                                               |
 
 Build for one browser: `node apps/extension/scripts/build.ts --target firefox`. Watch another: `node apps/extension/scripts/build.ts --target edge --watch`.
 

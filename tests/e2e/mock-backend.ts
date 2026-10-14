@@ -23,8 +23,10 @@ export type MockState = {
   codes: Set<string>;
   /** Drop every API connection (simulates the backend being unreachable). */
   down: boolean;
-  /** Parent removed the browser: all tokens stop working. */
+  /** Parent removed the browser: all tokens stop working, and /token says so with eGuard's signature. */
   revoked: boolean;
+  /** Something between the browser and eGuard answers /token "installation_revoked" without a signature. */
+  forgedRevocation: boolean;
   policyVersion: number;
   /** Merged into the served policy: tests change what the "parent" set. */
   policyPatch: Record<string, unknown>;
@@ -103,6 +105,7 @@ export async function startMockBackend(port: number) {
     codes: new Set(["824917"]),
     down: false,
     revoked: false,
+    forgedRevocation: false,
     policyVersion: 1,
     policyPatch: {},
     accessRequests: [],
@@ -147,8 +150,21 @@ export async function startMockBackend(port: number) {
         }
         case "POST /api/browser/v1/token": {
           const rt = (body as { refreshToken?: string } | null)?.refreshToken ?? "";
-          if (state.revoked) {
+          if (state.forgedRevocation) {
             send(res, 401, { error: "This browser was removed from eGuard.", code: "installation_revoked" });
+            return;
+          }
+          if (state.revoked) {
+            const r = signed({
+              type: "eguard.browser.revoked",
+              installationId: INSTALLATION,
+              at: new Date().toISOString(),
+            });
+            send(res, 401, {
+              error: "This browser was removed from eGuard.",
+              code: "installation_revoked",
+              revocation: { revocation: r.policy, signature: r.signature, keyId: r.keyId },
+            });
             return;
           }
           if (!state.refreshTokens.delete(rt)) {
@@ -159,7 +175,7 @@ export async function startMockBackend(port: number) {
           return;
         }
         case "GET /api/browser/v1/policy": {
-          if (state.revoked || !state.accessTokens.has(bearer)) {
+          if (state.revoked || state.forgedRevocation || !state.accessTokens.has(bearer)) {
             send(res, 401, { error: "Invalid or expired token" });
             return;
           }

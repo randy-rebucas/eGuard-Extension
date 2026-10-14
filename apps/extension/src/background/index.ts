@@ -34,16 +34,47 @@ const browser = detectCurrentBrowser();
 // storage.session keeps the access token in memory only; older browsers fall back to worker memory.
 const session = sessionArea(api) ?? memoryArea();
 const state = createState(api.storage.local, session, (key, issue) => log("storage_invalid", { key, issue }));
+
+/**
+ * eGuard's time: this computer's clock corrected by the offset seen in eGuard's last answer. Approvals, "Continue"
+ * and focus hours end by it, so moving the computer's clock back doesn't stretch them (while eGuard can be reached;
+ * offline, the last offset still applies). Differences under CLOCK_NOISE_MS are the Date header's rounding and
+ * network time, and leave the offset as it is.
+ */
+const CLOCK_NOISE_MS = 5_000;
+let skewMs = 0;
+let serverSeen = false;
+/** Every event waits for this: rules worked out before it would use the computer's clock for a moment. */
+const clockReady = state.clock
+  .get()
+  .then((c) => {
+    if (c && !serverSeen) skewMs = c.skewMs;
+  })
+  .catch(() => {});
+const trustedNow = () => Date.now() + skewMs;
+function onServerDate(serverMs: number) {
+  serverSeen = true;
+  const seen = serverMs - Date.now();
+  if (Math.abs(seen - skewMs) < CLOCK_NOISE_MS) return;
+  skewMs = Math.abs(seen) < CLOCK_NOISE_MS ? 0 : seen;
+  log("clock_offset", { skewMs });
+  void state.clock.set({ skewMs });
+}
+
 const http = createHttpClient({
   baseUrl: config.apiUrl,
   clientId: `${browser.family}-extension`,
   onDiagnostic: log,
+  onServerDate,
 });
 const tokens = createTokenManager({
   http,
   store: state.credentials,
+  now: trustedNow,
+  verifyRevocation: async (proof) => verifyWithAnyKey(await policyKeys, proof.revocation, proof.signature),
   onRevoked: async () => {
-    // The parent removed this browser: forget it, and stop filtering (enforce() finds no connection)
+    // eGuard's signed word that the parent removed this browser: forget it, and stop filtering (enforce() finds no
+    // connection)
     log("installation_revoked");
     await state.forgetInstallation();
     await service.enforce();
@@ -102,7 +133,8 @@ const BADGE: Record<ProtectionStatus["state"], { text: string; color: string }> 
   PROTECTED: { text: "", color: "#18A957" },
   NEEDS_ATTENTION: { text: "!", color: "#F4A62A" },
   ACTION_REQUIRED: { text: "!", color: "#EF5350" },
-  SYNC_PAUSED: { text: "", color: "#5A6E92" },
+  // Not blank: an empty badge looks the same as Protected
+  SYNC_PAUSED: { text: "!", color: "#5A6E92" },
   UNSUPPORTED: { text: "i", color: "#5A6E92" },
 };
 
@@ -136,6 +168,7 @@ const service = createService({
   safeBrowsing,
   installType: () => installType(api),
   hostAccess: () => hostAccess(api),
+  now: trustedNow,
   log,
   onStatus: (s) => updateBadge(s).catch((err: unknown) => log("badge_failed", { error: String(err) })),
 });
@@ -143,7 +176,7 @@ const service = createService({
 const trust = { runtimeId: api.runtime.id, extensionBase: extensionOrigin(api) };
 
 api.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-  void handleMessage(message, sender, service, trust, log).then(sendResponse);
+  void clockReady.then(() => handleMessage(message, sender, service, trust, log)).then(sendResponse);
   return true; // respond asynchronously (works in Chrome and Firefox)
 });
 
@@ -154,8 +187,8 @@ api.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
  */
 api.webNavigation.onErrorOccurred.addListener((details) => {
   if (details.frameId !== 0) return;
-  void service
-    .onNavigationError(details.tabId, details.url)
+  void clockReady
+    .then(() => service.onNavigationError(details.tabId, details.url))
     .catch((err: unknown) => log("block_page_failed", { error: String(err) }));
 });
 
@@ -182,6 +215,7 @@ async function ensureAlarms() {
 
 api.alarms.onAlarm.addListener((alarm) => {
   void (async () => {
+    await clockReady;
     if (alarm.name === SYNC_ALARM) await service.periodic();
     if (alarm.name === RULES_ALARM) await service.enforce();
     await service.getStatus();
@@ -193,8 +227,8 @@ function start() {
   // Rules persist across restarts, but the clock may have moved past a focus-hours boundary meanwhile.
   // Then sync straight away (API: "every 5 minutes, and on browser start"): the browser may have been closed for
   // days, and the parent sees it check in now rather than at the first alarm.
-  void service
-    .enforce()
+  void clockReady
+    .then(() => service.enforce())
     .then(() => service.periodic())
     .then(() => service.getStatus())
     .catch((err: unknown) => log("startup_failed", { error: String(err) }));

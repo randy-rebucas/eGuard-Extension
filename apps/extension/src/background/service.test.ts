@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Handler } from "@eguard/api-client/testing";
 import { exactHostFilter } from "./enforcement.ts";
-import { harness, pairOk, policy, signFor, signed, tok } from "./test-harness.ts";
+import { MANUAL_LIMITS, REQUESTS_FRESH_MS } from "./service.ts";
+import { harness, pairOk, policy, removedAnswer, signFor, signed, tok, tokenOk } from "./test-harness.ts";
 
 const PAIR = "/api/browser/v1/pair";
 const POLICY = "/api/browser/v1/policy";
 const TOKEN = "/api/browser/v1/token";
-/** What /token answers once a parent removed the browser. */
-const revoked: Handler = () => ({ status: 401, json: { error: "Removed", code: "installation_revoked" } });
+/** What /token answers once a parent removed the browser: eGuard's signed revocation. */
+const revoked: Handler = () => removedAnswer();
 
 describe("pairing", () => {
   it("stores credentials, downloads the first policy, and never stores a password", async () => {
@@ -99,7 +100,7 @@ describe("policy sync", () => {
     ]);
     await h.service.syncPolicy();
     expect((await h.state.policy.get())?.policy.version).toBe(5);
-    expect((await h.state.sync.get())?.lastError?.kind).toBe("invalid_response");
+    expect((await h.state.sync.get())?.lastError?.kind).toBe("refused");
     expect(h.log).toHaveBeenCalledWith(
       "policy_rejected",
       expect.objectContaining({ why: "version_rollback" }),
@@ -233,18 +234,59 @@ describe("policy signatures", () => {
     expect((await h.state.policy.get())?.policy.blockedDomains).toEqual(["example.com"]);
   });
 
+  it("still refuses an older version after the stored policy was discarded", async () => {
+    const h = await paired([
+      () => ({ status: 200, json: signed(policy(4)) }),
+      () => ({ status: 200, json: signed(policy(2)) }),
+    ]);
+    const stored = (await h.state.policy.get())!;
+    await h.state.policy.set({ ...stored, signature: signFor(policy(9)) }); // no longer verifies
+    expect((await h.service.getStatus()).policyVersion).toBeNull();
+    await h.service.syncPolicy();
+    expect(await h.state.policy.get()).toBeNull();
+    expect(h.log).toHaveBeenCalledWith(
+      "policy_rejected",
+      expect.objectContaining({ why: "version_rollback" }),
+    );
+  });
+
+  it("takes a same-version policy whose content changed (new category lists), and ignores an identical one", async () => {
+    const newer = { ...policy(1), categoryDomains: { ADULT: ["adult.example", "more.example"] } };
+    const h = await paired([
+      () => ({ status: 200, json: signed(policy(1)) }),
+      () => ({ status: 200, json: signed(policy(1)) }),
+      () => ({ status: 200, json: signed(newer) }),
+    ]);
+    const first = await h.state.policy.get();
+    await h.service.syncPolicy();
+    expect(await h.state.policy.get()).toEqual(first);
+    await h.service.syncPolicy();
+    expect((await h.state.policy.get())?.policy.categoryDomains).toEqual(newer.categoryDomains);
+    expect(
+      h.browserRules.dynamic.some(
+        (r) => r.action.type === "block" && r.condition.requestDomains?.includes("more.example"),
+      ),
+    ).toBe(true);
+  });
+
   it("summarises the verified policy for the popup: counts and switches, never site names", async () => {
     const withFocus = {
       ...policy(2),
       allowedDomains: ["school.example", "khanacademy.org"],
       unknownSitesPolicy: "WARN",
       schedule: { enabled: true, startTime: "21:00", endTime: "06:00", timezone: "UTC" },
+      youtubeRestrict: "MODERATE",
     };
     const h = await paired([() => ({ status: 200, json: signed(withFocus) })]);
     const s = await h.service.getStatus();
+    // The signed field reaches the browser's rules as the Restricted Mode header
+    expect(h.browserRules.dynamic.find((r) => r.action.type === "modifyHeaders")?.action).toMatchObject({
+      requestHeaders: [{ header: "YouTube-Restrict", value: "Moderate" }],
+    });
     expect(s.policySummary).toEqual({
       safeSearch: true,
       safeBrowsing: true,
+      youtubeRestrict: "MODERATE",
       blockedCategories: 1,
       categories: policy(2).blockedCategories,
       blockedToday: {},
@@ -288,7 +330,7 @@ describe("enforcement", () => {
       (r) => r.action.type !== "block" || !r.condition.requestDomains?.includes("example.com"),
     );
     const s = await h.service.getStatus();
-    expect(s.state).toBe("NEEDS_ATTENTION");
+    expect(s.state).toBe("ACTION_REQUIRED");
     expect(s.issues[0]?.id).toBe("rules-not-active");
     await h.service.enforce();
     expect((await h.service.getStatus()).state).toBe("PROTECTED");
@@ -385,6 +427,27 @@ describe("enforcement", () => {
     expect(h.openBlockPage).not.toHaveBeenCalled();
   });
 
+  it("keeps SafeSearch on a search engine the child continued to", async () => {
+    const h = await pairedWith([{ ...policy(1), blockedDomains: [], unknownSitesPolicy: "WARN" }]);
+    // Warned engines get no compiled redirect (it would skip the warning)
+    expect(h.browserRules.dynamic.some((r) => r.action.type === "redirect")).toBe(false);
+    await h.service.continueToSite("https://www.google.com/");
+    const google = h.browserRules.session.find((r) => r.action.type === "redirect");
+    expect(google?.condition.regexFilter).toContain("google\\.com");
+    expect(google).toMatchObject({
+      priority: 110,
+      action: {
+        redirect: {
+          transform: { queryTransform: { addOrReplaceParams: [{ key: "safe", value: "active" }] } },
+        },
+      },
+    });
+    // Without SafeSearch, Continue adds the allow rule only
+    const off = await pairedWith([{ ...policy(1), safeSearch: false, unknownSitesPolicy: "WARN" }]);
+    await off.service.continueToSite("https://www.google.com/");
+    expect(off.browserRules.session.map((r) => r.action.type)).toEqual(["allow"]);
+  });
+
   it("opens only the exact site a child continued to, never its subdomains or a whole domain ending", async () => {
     const h = await pairedWith([{ ...policy(1), unknownSitesPolicy: "WARN" }]);
     // "com" is a host no list mentions, so it only warns; Continue must not open every .com site
@@ -444,8 +507,86 @@ describe("enforcement", () => {
 
     const after = await h.service.checkAccess("https://www.example.com/page");
     expect(after.decision).toBe("ALLOW");
-    expect(h.browserRules.dynamic.find((r) => r.action.type === "allow")?.condition.requestDomains).toContain(
-      "www.example.com",
-    );
+    expect(
+      h.browserRules.dynamic
+        .filter((r) => r.action.type === "allow")
+        .flatMap((r) => r.condition.requestDomains ?? []),
+    ).toContain("www.example.com");
+  });
+});
+
+describe("buttons pressed again and again", () => {
+  const ACCESS = "/api/browser/v1/access-requests";
+  const request = (o: object = {}) => ({
+    id: "req_1",
+    domain: "www.example.com",
+    reason: null,
+    status: "PENDING",
+    duration: null,
+    expiresAt: null,
+    createdAt: "2026-09-29T09:00:00Z",
+    decidedAt: null,
+    ...o,
+  });
+  const list = (r: object) => () => ({ status: 200, json: { requests: [r] } });
+  const policyReads = (h: ReturnType<typeof harness>) => h.calls.filter((c) => c.path === POLICY).length;
+  const listReads = (h: ReturnType<typeof harness>) => h.calls.filter((c) => c.path === ACCESS).length;
+
+  it("Sync now pressed over and over stops reaching eGuard for a while; the periodic sync never does", async () => {
+    const h = harness({
+      [PAIR]: pairOk,
+      [POLICY]: () => ({ status: 200, json: signed(policy(1)) }),
+      [TOKEN]: tokenOk,
+    });
+    await h.service.pairWithCode("824917");
+    const { max, windowMs } = MANUAL_LIMITS.sync;
+    for (let i = 0; i < max; i++) await h.service.syncNow();
+    expect(policyReads(h)).toBe(1 + max);
+    await expect(h.service.syncNow()).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    // Check again on a block page counts the same way
+    await h.service.checkAccess("https://www.example.com/");
+    expect(policyReads(h)).toBe(1 + max);
+    await h.service.periodic();
+    expect(policyReads(h)).toBe(2 + max);
+
+    h.advance(windowMs);
+    await h.service.syncNow();
+    expect(policyReads(h)).toBe(3 + max);
+  });
+
+  it("Check again right after a parent's answer fetches the policy at once", async () => {
+    const approved = {
+      ...policy(2),
+      temporaryAllows: [{ domain: "www.example.com", until: "2026-09-29T11:00:00Z" }],
+    };
+    const h = harness({
+      [PAIR]: pairOk,
+      [POLICY]: [policy(1), approved].map((p) => () => ({ status: 200, json: signed(p) })),
+      [ACCESS]: list(request({ status: "APPROVED", duration: "1H", decidedAt: "2026-09-29T10:00:02Z" })),
+    });
+    await h.service.pairWithCode("824917");
+    for (let i = 0; i < MANUAL_LIMITS.sync.max; i++) await h.service.syncNow().catch(() => {});
+    h.advance(3_000); // presses used up, but the answer came after the last sync
+    const after = await h.service.checkAccess("https://www.example.com/page");
+    expect(after.decision).toBe("ALLOW");
+  });
+
+  it("block pages share one list of requests, and a refused read keeps the last answer", async () => {
+    const h = harness({
+      [PAIR]: pairOk,
+      [POLICY]: () => ({ status: 200, json: signed(policy(1)) }),
+      [ACCESS]: [list(request()), () => ({ status: 429, json: { error: "Too many requests." } })],
+    });
+    await h.service.pairWithCode("824917");
+    const url = "https://www.example.com/page";
+    await h.service.blockInfo(url);
+    await h.service.blockInfo(url);
+    expect(listReads(h)).toBe(1);
+
+    h.advance(REQUESTS_FRESH_MS);
+    const later = await h.service.blockInfo(url);
+    expect(listReads(h)).toBe(2);
+    // Still waiting for a parent, not "Ask a parent" again
+    expect(later.request).toEqual({ status: "PENDING", duration: null });
   });
 });

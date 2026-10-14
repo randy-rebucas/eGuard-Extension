@@ -13,14 +13,15 @@ WHAT THE EXTENSION NEVER COLLECTS
 - A history of the websites visited, or the addresses of pages that load or are blocked
 - The content of web pages, messages or emails
 - Keystrokes, form entries or passwords
+- What is watched on YouTube (Restricted Mode is a header the browser adds to YouTube requests by itself)
 - Search queries (SafeSearch works by adding the search engine's own safe-search setting to the search address on the device; the query is never read or sent)
 - Cookies, screenshots, camera, microphone or location
 
 WHAT IS SENT TO EGUARD, AND WHY
-1. When the browser is connected: the browser's name and version, the extension's version and the type of operating system (for example Windows). This shows the parent which browser is protected and which protections it supports. Connecting uses a one-time pairing code from the parent dashboard; the parent's password is never entered in the child's browser.
+1. When the browser is connected: the browser's name and version, the extension's version and the type of operating system (for example Windows). The two versions are sent again with each health report, so the parent sees updates. This shows the parent which browser is protected and which protections it supports. Connecting uses a one-time pairing code from the parent dashboard; the parent's password is never entered in the child's browser.
 2. Protection status and health-check results: whether the family's settings are applied, the settings version, and whether each check passes (for example "private windows are covered"). Sent when something changes, at least once an hour, and when someone chooses "Run health check". This lets eGuard tell parents when protection needs attention.
 3. Daily blocked-page counts: once a day, how many pages were blocked the day before in each category or for each reason (for example "3 gaming"). Never which websites, and nothing more detailed than a day.
-4. Access requests, only when the child chooses to send one from eGuard's block page: the website's domain (for example "example.com") and the reason the child types, if any. The parent sees it in the dashboard and decides.
+4. Access requests, only when the child chooses to send one from eGuard's block page: the website's domain (for example "example.com") and the reason the child types, if any, which is a message to their parent. The parent sees it in the dashboard and decides.
 
 Each request to eGuard's server carries a credential that identifies the browser installation, not the person. Like any web server, ours receives the browser's IP address with each request; it is used only briefly to limit repeated requests.
 
@@ -31,8 +32,7 @@ WHO CAN SEE IT
 The parents in the child's eGuard family. We share data outside the family only with service providers who run eGuard for us (hosting, database and email), under contract and only to provide their service, and with authorities when the law requires it. We don't sell personal data.
 
 HOW LONG WE KEEP IT
-- Health-check results and daily blocked-page counts: the family's retention period (90 days unless a parent changes it in Settings › Privacy), then deleted automatically.
-- Access requests: until the parent deletes the child or the family account.
+- Health-check results, daily blocked-page counts and access requests: the family's retention period (90 days unless a parent changes it in Settings › Privacy), then deleted automatically, or sooner when the parent deletes the child or the family account.
 - Browser and extension details: until the parent removes the browser in the dashboard, which also disconnects it and stops all sending.
 
 CHILDREN

@@ -6,8 +6,29 @@ import { HealthCheckId, ProtectionState } from "./status.ts";
  * Wire contract with the eGuard backend (/api/browser/v1). See docs/API.md.
  * Errors follow the existing eGuard convention: `error` is written for people and safe to show.
  */
-export const ApiErrorBody = z.object({ error: z.string(), code: z.string().optional() });
+export const ApiErrorBody = z.object({
+  error: z.string(),
+  code: z.string().optional(),
+  /** /token's installation_revoked and token_reused: eGuard's signed word (RevocationProof), kept unparsed here. */
+  revocation: z.unknown().optional(),
+});
 export type ApiErrorBody = z.infer<typeof ApiErrorBody>;
+
+/**
+ * eGuard's signed statement that this installation is gone, signed with the policy key over the canonical JSON of
+ * `revocation`. The extension forgets its connection (and lifts its rules) only on one that verifies: an unsigned
+ * 401 could come from a proxy between the browser and eGuard.
+ */
+export const RevocationProof = z.object({
+  revocation: z.looseObject({
+    type: z.literal("eguard.browser.revoked"),
+    installationId: z.string().min(1),
+    at: z.string(),
+  }),
+  signature: z.string().min(1).max(200),
+  keyId: z.string().max(64),
+});
+export type RevocationProof = z.infer<typeof RevocationProof>;
 
 export const PairRequest = z.object({
   code: z.string(),
@@ -51,11 +72,16 @@ export type AccessRequest = z.infer<typeof AccessRequest>;
 export const AccessRequestEnvelope = z.object({ request: AccessRequest });
 export const AccessRequestList = z.object({ requests: z.array(AccessRequest) });
 
-/** POST /health: the state the popup shows, the policy version enforced, and each check's status. Nothing else. */
+/**
+ * POST /health: the state the popup shows, the policy version enforced, each check's status, and the versions
+ * (so the parent sees the current one after an update, not the one from pairing day). Nothing else.
+ */
 export const HealthReport = z.object({
   state: ProtectionState,
   policyVersion: z.number().int().positive().nullable(),
   checks: z.array(z.object({ id: HealthCheckId, status: CheckStatus })),
+  extensionVersion: z.string().max(20).optional(),
+  browserVersion: z.string().max(40).nullable().optional(),
 });
 export type HealthReport = z.infer<typeof HealthReport>;
 export const HealthReportResponse = z.object({ ok: z.literal(true), score: z.number(), total: z.number() });

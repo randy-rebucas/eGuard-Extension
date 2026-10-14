@@ -40,7 +40,7 @@ export async function handleMessage(
         await service.runHealthCheck();
         break;
       case "SYNC_POLICY":
-        await service.syncPolicy();
+        await service.syncNow();
         break;
       case "PAIR_WITH_CODE":
         await service.pairWithCode(msg.code);

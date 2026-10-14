@@ -86,14 +86,25 @@ export const CAPABILITY_MATRIX: Row[] = [
     api: "declarativeNetRequest redirect (URL transform) on Google, Bing, DuckDuckGo",
     by: {
       chrome: auto(
-        "eGuard turns on SafeSearch for Google (google.com, google.com.ph), Bing and DuckDuckGo in this browser.",
+        "eGuard turns on SafeSearch for Google (google.com, google.com.ph), Bing and DuckDuckGo in this browser, and blocks searches on engines where it can't.",
       ),
       edge: auto(
-        "eGuard turns on SafeSearch for Google (google.com, google.com.ph), Bing and DuckDuckGo in this browser.",
+        "eGuard turns on SafeSearch for Google (google.com, google.com.ph), Bing and DuckDuckGo in this browser, and blocks searches on engines where it can't.",
       ),
       firefox: auto(
-        "eGuard turns on SafeSearch for Google (google.com, google.com.ph), Bing and DuckDuckGo in this browser.",
+        "eGuard turns on SafeSearch for Google (google.com, google.com.ph), Bing and DuckDuckGo in this browser, and blocks searches on engines where it can't.",
       ),
+      safari: SAFARI,
+    },
+  },
+  {
+    id: "YOUTUBE_RESTRICT",
+    label: "YouTube Restricted Mode",
+    api: "declarativeNetRequest modifyHeaders (YouTube-Restrict) on YouTube's hosts",
+    by: {
+      chrome: auto("eGuard turns on YouTube's Restricted Mode at the level your family chose."),
+      edge: auto("eGuard turns on YouTube's Restricted Mode at the level your family chose."),
+      firefox: auto("eGuard turns on YouTube's Restricted Mode at the level your family chose."),
       safari: SAFARI,
     },
   },

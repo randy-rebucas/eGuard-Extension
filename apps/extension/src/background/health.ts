@@ -1,7 +1,7 @@
 import { capabilitiesFor } from "@eguard/browser-adapter";
 import type { BrowserInfo, CapabilityId, HealthCheck } from "@eguard/schemas";
 import type { SyncRecord } from "./state.ts";
-import { SYNC_STALE_MS, privateWindowsHelp } from "./status.ts";
+import { SYNC_STALE_MS, privateWindowsHelp, syncFailed } from "./status.ts";
 
 /**
  * chrome.privacy.services.safeBrowsingEnabled, narrowed. `level` is the browser's levelOfControl:
@@ -57,8 +57,6 @@ export function siteAccessHelp(b: BrowserInfo): string {
 
 const note = (browser: BrowserInfo, id: CapabilityId) =>
   capabilitiesFor(browser.family).find((c) => c.id === id)?.note ?? "";
-
-const OFFLINE_KINDS = new Set(["network", "timeout", "server"]);
 
 /** The seven self-checks, in the order the popup lists them. Guidance is for a parent at the child's computer. */
 export function buildChecks(i: HealthInput): HealthCheck[] {
@@ -153,8 +151,7 @@ export function buildChecks(i: HealthInput): HealthCheck[] {
   );
 
   const lastSuccess = i.sync?.lastSuccessAt ? Date.parse(i.sync.lastSuccessAt) : null;
-  const offline = !!i.sync?.lastError && OFFLINE_KINDS.has(i.sync.lastError.kind);
-  const fresh = lastSuccess !== null && i.now - lastSuccess <= SYNC_STALE_MS && !offline;
+  const fresh = lastSuccess !== null && i.now - lastSuccess <= SYNC_STALE_MS && !syncFailed(i.sync);
   checks.push(
     fresh
       ? {

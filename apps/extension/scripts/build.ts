@@ -5,6 +5,7 @@
  *   node scripts/build.ts --target firefox    # one target
  *   node scripts/build.ts --target chrome --watch   # dev: rebuild on change
  *   node scripts/build.ts --out ../../dist-e2e      # custom output (tests)
+ *   node scripts/build.ts --dev-env           # dist/ from a non-production .env (never for the stores)
  */
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -20,8 +21,10 @@ const { values } = parseArgs({
     target: { type: "string", default: "all" },
     watch: { type: "boolean", default: false },
     out: { type: "string", default: path.join(repoRoot, "dist") },
+    "dev-env": { type: "boolean", default: false },
   },
 });
+const defaultOut = path.join(repoRoot, "dist");
 
 const targets: BuildTarget[] =
   values.target === "all" ? [...BuildTarget.options] : [BuildTarget.parse(values.target)];
@@ -35,6 +38,20 @@ const define = Object.fromEntries(
 );
 const pkg = JSON.parse(await readFile(path.join(appDir, "package.json"), "utf8")) as { version: string };
 const outRoot = path.resolve(values.out);
+
+// dist/ is what gets zipped for the stores: a minified build pointing at a development server (http, localhost)
+// must not end up there by accident. Watch builds and custom --out (tests, try) are for this computer only.
+if (
+  !values.watch &&
+  env.VITE_ENVIRONMENT !== "production" &&
+  outRoot === path.resolve(defaultOut) &&
+  !values["dev-env"]
+) {
+  throw new Error(
+    `VITE_ENVIRONMENT is "${env.VITE_ENVIRONMENT}": dist/ is for store builds. Set the production values ` +
+      "(docs/RELEASE.md), use npm run dev, or pass --dev-env to build dist/ from this environment anyway.",
+  );
+}
 
 async function writeManifest(target: BuildTarget, dir: string) {
   await mkdir(dir, { recursive: true });

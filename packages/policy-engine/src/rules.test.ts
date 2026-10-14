@@ -47,6 +47,8 @@ function browserDecision(rules: DnrRule[], url: string): "ALLOW" | "BLOCK" | "RE
   const rank = { allow: 3, block: 2, redirect: 1 } as const;
   const matches = rules.filter((r) => {
     const c = r.condition;
+    // Header rules change the request, never whether it loads
+    if (r.action.type === "modifyHeaders") return false;
     if (!c.resourceTypes.includes("main_frame") || !host) return false;
     if (c.excludedRequestDomains?.some((d) => domainCovers(d, host))) return false;
     if (c.requestDomains && !c.requestDomains.some((d) => domainCovers(d, host))) return false;
@@ -56,9 +58,8 @@ function browserDecision(rules: DnrRule[], url: string): "ALLOW" | "BLOCK" | "RE
     return true;
   });
   if (!matches.length) return "ALLOW";
-  const top = matches.sort(
-    (a, b) => b.priority - a.priority || rank[b.action.type] - rank[a.action.type],
-  )[0]!;
+  const rankOf = (r: DnrRule) => (r.action.type === "modifyHeaders" ? 0 : rank[r.action.type]);
+  const top = matches.sort((a, b) => b.priority - a.priority || rankOf(b) - rankOf(a))[0]!;
   return top.action.type === "block" ? "BLOCK" : top.action.type === "redirect" ? "REDIRECT" : "ALLOW";
 }
 
@@ -136,9 +137,99 @@ describe("compileRules", () => {
     expect(browserDecision(rules, "https://www.google.com.ph/search?q=x")).toBe("REDIRECT");
     expect(unsupportedSearch("https://www.google.co.uk/search?q=x")).toBe(true);
     expect(unsupportedSearch("https://www.google.com/search?q=x")).toBe(false);
+    // Bing's country hosts get SafeSearch too
+    expect(redirects("https://cn.bing.com/search?q=x")).toBe(true);
+    // A trailing dot reaches the same engine but slips past the redirects: blocked instead
+    for (const url of [
+      "https://www.google.com./search?q=x",
+      "https://google.com.:443/search?q=x",
+      "https://www.bing.com./images/search?q=x",
+      "https://duckduckgo.com./?q=x",
+      "https://www.google.co.uk./search?q=x",
+    ]) {
+      expect(browserDecision(rules, url), url).toBe("BLOCK");
+      expect(unsupportedSearch(url), url).toBe(true);
+    }
+    // Engines whose own filter eGuard can't switch on: their searches are blocked, the rest of the site isn't
+    for (const url of [
+      "https://search.yahoo.com/search?p=x",
+      "https://ph.search.yahoo.com/search?p=x",
+      "https://search.brave.com/images?q=x",
+      "https://yandex.ru/search/?text=x",
+      "https://yandex.com/images/search?text=x",
+      "https://www.ecosia.org/search?q=x",
+      "https://www.startpage.com/sp/search?query=x",
+      "https://www.qwant.com/?q=x",
+    ]) {
+      expect(browserDecision(rules, url), url).toBe("BLOCK");
+      expect(unsupportedSearch(url), url).toBe(true);
+    }
+    expect(browserDecision(rules, "https://mail.yahoo.com/")).toBe("ALLOW");
+    expect(browserDecision(rules, "https://www.ecosia.org/")).toBe("ALLOW");
+    expect(unsupportedSearch("https://news.example/search?q=x")).toBe(false);
+    expect(unsupportedSearch("https://notgoogle.com./x")).toBe(false);
     expect(compileRules(policy({ safeSearch: false }), { now: NOW }).some((r) => r.priority === 110)).toBe(
       false,
     );
+  });
+
+  it("sets YouTube's Restricted Mode header at the level the policy asks for, above every allow", () => {
+    const header = (p: BrowserProtectionPolicy) =>
+      compileRules(p, { now: NOW, alwaysAllow: ["www.eguard.family"] }).filter(
+        (r) => r.action.type === "modifyHeaders",
+      );
+    // Older servers don't send the field: nothing to set
+    expect(header(policy())).toEqual([]);
+    expect(header(policy({ youtubeRestrict: "OFF" }))).toEqual([]);
+    const [moderate] = header(policy({ youtubeRestrict: "MODERATE", safeSearch: false }));
+    expect(moderate).toMatchObject({
+      priority: PRIORITY.safeSearch,
+      action: { requestHeaders: [{ header: "YouTube-Restrict", operation: "set", value: "Moderate" }] },
+      condition: {
+        requestDomains: [
+          "youtube.com",
+          "youtube-nocookie.com",
+          "youtubei.googleapis.com",
+          "youtube.googleapis.com",
+        ],
+        // The player and search load over XHR from www.youtube.com, and embeds are frames
+        resourceTypes: ["main_frame", "sub_frame", "xmlhttprequest"],
+      },
+    });
+    // An allowed youtube.com (priority 54–91) would skip a header rule ranked below it
+    expect(moderate!.priority).toBeGreaterThan(PRIORITY.allow);
+    expect(header(policy({ youtubeRestrict: "STRICT" }))[0]?.action).toMatchObject({
+      requestHeaders: [{ value: "Strict" }],
+    });
+    // A level this build doesn't know fails closed
+    expect(header(policy({ youtubeRestrict: "KIDS" }))[0]?.action).toMatchObject({
+      requestHeaders: [{ value: "Strict" }],
+    });
+    // It changes requests, not what opens
+    const rules = compileRules(policy({ youtubeRestrict: "STRICT", blockedDomains: [] }), { now: NOW });
+    expect(browserDecision(rules, "https://www.youtube.com/watch?v=1")).toBe("ALLOW");
+  });
+
+  it("compares header rules by header, case-insensitively, and value", () => {
+    const rule = compileRules(policy({ youtubeRestrict: "MODERATE" }), { now: NOW }).find(
+      (r) => r.action.type === "modifyHeaders",
+    )!;
+    const stored = {
+      ...rule,
+      action: {
+        type: "modifyHeaders",
+        requestHeaders: [{ header: "youtube-restrict", operation: "set", value: "Moderate" }],
+      },
+    };
+    expect(ruleFingerprint(stored)).toBe(ruleFingerprint(rule));
+    const strict = {
+      ...rule,
+      action: {
+        type: "modifyHeaders",
+        requestHeaders: [{ header: "YouTube-Restrict", operation: "set", value: "Strict" }],
+      },
+    };
+    expect(ruleFingerprint(strict)).not.toBe(ruleFingerprint(rule));
   });
 
   it("drops expired approvals", () => {
@@ -148,9 +239,30 @@ describe("compileRules", () => {
         { domain: "facebook.com", until: "2026-09-29T03:00:00Z" }, // 11:00 Manila, over
       ],
     });
-    const allow = compileRules(p, { now: NOW }).find((r) => r.priority === PRIORITY.allow);
-    expect(allow?.condition.requestDomains).toContain("roblox.com");
-    expect(allow?.condition.requestDomains).not.toContain("facebook.com");
+    const domains = compileRules(p, { now: NOW })
+      .filter((r) => r.action.type === "allow")
+      .flatMap((r) => r.condition.requestDomains ?? []);
+    expect(domains).toContain("roblox.com");
+    expect(domains).not.toContain("facebook.com");
+  });
+
+  it("an approval ranks like an allowed site: a more specific blocked site stays blocked", () => {
+    const p = policy({
+      allowedDomains: [],
+      blockedDomains: ["games.school.example"],
+      temporaryAllows: [{ domain: "school.example", until: "2026-09-29T05:00:00Z" }],
+    });
+    const rules = compileRules(p, { now: NOW });
+    expect(browserDecision(rules, "https://school.example/")).toBe("ALLOW");
+    expect(browserDecision(rules, "https://games.school.example/")).toBe("BLOCK");
+    expect(evaluateUrl(p, "https://games.school.example/", { now: NOW }).reason.type).toBe("BLOCKED_SITE");
+    // The child asked for exactly the blocked site: the approval opens it (a tie goes to allowed)
+    const same = policy({
+      allowedDomains: [],
+      blockedDomains: ["games.school.example"],
+      temporaryAllows: [{ domain: "games.school.example", until: "2026-09-29T05:00:00Z" }],
+    });
+    expect(browserDecision(compileRules(same, { now: NOW }), "https://games.school.example/")).toBe("ALLOW");
   });
 
   it("the browser's decision matches evaluateUrl for every case (block page explanations are true)", () => {
@@ -178,6 +290,12 @@ describe("compileRules", () => {
       }),
       policy({ unknownSitesPolicy: "SOMETHING_NEW" }),
       policy({ safeSearch: false }),
+      policy({
+        allowedDomains: [],
+        blockedDomains: ["games.school.example"],
+        temporaryAllows: [{ domain: "school.example", until: "2026-09-29T05:00:00Z" }],
+        unknownSitesPolicy: "BLOCK",
+      }),
     ];
     const urls = [
       "https://school.example/",

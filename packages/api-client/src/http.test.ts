@@ -89,4 +89,35 @@ describe("http client", () => {
     });
     expect(await slow.request("/x", Ok)).toMatchObject({ ok: false, kind: "timeout" });
   });
+
+  it("reports eGuard's clock from the Date header of any answer, errors included", async () => {
+    const seen: number[] = [];
+    const date = "Tue, 29 Sep 2026 10:00:00 GMT";
+    const { http } = client(
+      {
+        "/x": [
+          () => ({ status: 200, json: { ok: true }, headers: { Date: date } }),
+          () => ({ status: 401, json: { error: "no" }, headers: { Date: date } }),
+          () => ({ status: 200, json: { ok: true } }),
+        ],
+      },
+      { onServerDate: (ms) => seen.push(ms) },
+    );
+    await http.request("/x", Ok);
+    await http.request("/x", Ok);
+    await http.request("/x", Ok);
+    expect(seen).toEqual([Date.parse(date), Date.parse(date)]);
+  });
+
+  it("passes a revocation in an error body on, unverified", async () => {
+    const revocation = { revocation: { type: "eguard.browser.revoked" }, signature: "s", keyId: "k" };
+    const { http } = client({
+      "/x": () => ({ status: 401, json: { error: "gone", code: "installation_revoked", revocation } }),
+    });
+    expect(await http.request("/x", Ok)).toMatchObject({
+      ok: false,
+      code: "installation_revoked",
+      revocation,
+    });
+  });
 });

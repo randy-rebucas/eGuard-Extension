@@ -53,13 +53,18 @@ describe("buildManifest", () => {
         "webNavigation",
       ]);
     }
-    // The eGuard API, plus the search engines SafeSearch rewrites. Blocking itself needs no host access.
+    // The eGuard API, the search engines SafeSearch rewrites and YouTube's Restricted Mode hosts. Blocking itself
+    // needs no host access.
     expect(m.host_permissions).toEqual([
       "https://www.eguard.family/*",
       "*://*.google.com/*",
       "*://*.google.com.ph/*",
       "*://*.bing.com/*",
       "*://*.duckduckgo.com/*",
+      "*://*.youtube.com/*",
+      "*://*.youtube-nocookie.com/*",
+      "*://youtubei.googleapis.com/*",
+      "*://youtube.googleapis.com/*",
     ]);
     expect(JSON.stringify(m)).not.toMatch(/<all_urls>|\*:\/\/\*\//);
     expect(m).not.toHaveProperty("externally_connectable");
@@ -89,9 +94,9 @@ describe("buildManifest", () => {
         id: "browser-extension@eguard.family",
         // AMO rejects new add-ons without a data-collection declaration; Firefox 140 is the first to read it
         strict_min_version: "140.0",
-        data_collection_permissions: { required: ["browsingActivity"] },
+        data_collection_permissions: { required: ["browsingActivity", "personalCommunications"] },
       },
-      gecko_android: { strict_min_version: "142.0" },
+      // Not listed for Firefox for Android until it's tested there
     });
     expect(fx).not.toHaveProperty("minimum_chrome_version");
   });

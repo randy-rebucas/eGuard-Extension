@@ -18,7 +18,7 @@ import {
 import type { Issue, PolicySummary, ProtectionStatus } from "@eguard/schemas";
 import { getExtensionApi } from "@eguard/browser-adapter";
 import { useStatus } from "../shared/status-store.ts";
-import { browserLabel, relativeTime } from "../shared/format.ts";
+import { browserLabel, clockTime, relativeTime } from "../shared/format.ts";
 import { categoryVisual } from "../shared/categories.ts";
 import { HealthList, scoreLabel } from "../shared/HealthList.tsx";
 import {
@@ -230,9 +230,9 @@ function Body({ status }: { status: ProtectionStatus }) {
 }
 
 const OTHER_SITES: Record<PolicySummary["otherSites"], string> = {
-  ALLOW: "Allowed",
+  ALLOW: "Allow",
   WARN: "Warn first",
-  BLOCK: "Allowed list only",
+  BLOCK: "Allowed only",
 };
 
 type Row = { Icon: LucideIcon; label: string; value: ReactNode };
@@ -264,7 +264,9 @@ function FamilySettings({ s, protectedNow }: { s: PolicySummary; protectedNow: b
     { Icon: Search, label: "Safe Search", value: <Toggle on={s.safeSearch} /> },
     {
       Icon: Clock,
-      label: s.focusHours ? `Focus hours · ${s.focusHours.startTime}–${s.focusHours.endTime}` : "Focus hours",
+      label: s.focusHours
+        ? `Focus hours · ${clockTime(s.focusHours.startTime)}–${clockTime(s.focusHours.endTime)}`
+        : "Focus hours",
       value: s.focusHours?.activeNow ? <Badge tone="accent">NOW</Badge> : <Toggle on={!!s.focusHours} />,
     },
     { Icon: LayoutGrid, label: "Blocked categories", value: s.blockedCategories },
@@ -347,7 +349,8 @@ function IssueRow({ issue, busy, onSync }: { issue: Issue; busy: string | null; 
   const t = TONE_CLASS[v.tone];
   return (
     <li className="flex items-start gap-2.5 rounded-[12px] border border-line bg-surface p-3">
-      <v.Icon className={`mt-0.5 size-4 shrink-0 ${t.fg}`} aria-label={v.label} />
+      <v.Icon className={`mt-0.5 size-4 shrink-0 ${t.fg}`} aria-hidden="true" />
+      <span className="sr-only">{v.label}:</span>
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-semibold">{issue.title}</p>
         <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{issue.detail}</p>

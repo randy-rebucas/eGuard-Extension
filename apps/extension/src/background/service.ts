@@ -10,14 +10,19 @@ import {
 } from "@eguard/api-client";
 import { isSupportedBrowser } from "@eguard/browser-adapter";
 import {
+  canonicalJson,
   categoryIndex,
   domainCovers,
+  engineDomain,
   evaluateUrl,
+  SAFE_SEARCH_ENGINES,
   httpHost,
   isScheduleActive,
   otherSitesDecision,
+  youtubeRestrictHeader,
 } from "@eguard/policy-engine";
 import type {
+  AccessRequest,
   BlockInfo,
   BrowserInfo,
   BrowserProtectionPolicy,
@@ -27,7 +32,7 @@ import type {
 import type { Enforcement } from "./enforcement.ts";
 import { buildChecks, dayIn, reportKey, type SafeBrowsingApi } from "./health.ts";
 import type { State } from "./state.ts";
-import { deriveStatus } from "./status.ts";
+import { deriveStatus, isOffline } from "./status.ts";
 
 /** A health report goes to eGuard when something changed, and at least this often while nothing does. */
 export const REPORT_EVERY_MS = 60 * 60_000;
@@ -35,6 +40,18 @@ export const REPORT_EVERY_MS = 60 * 60_000;
 export const KEEP_COUNTS_DAYS = 14;
 /** POST /events accepts each count up to this. */
 const MAX_DAILY_COUNT = 100_000;
+/**
+ * How often buttons anyone at the computer can press again and again ("Sync now", "Check again", "Run health check")
+ * reach eGuard. eGuard limits each browser's policy reads (120 per 15 minutes) and health reports (60 an hour); using
+ * them up would hold back the parent's next change, and the alert about the next problem. These leave room for the
+ * 5-minute sync and for reports of a changed result, which always go.
+ */
+export const MANUAL_LIMITS = {
+  sync: { max: 60, windowMs: 15 * 60_000 },
+  report: { max: 20, windowMs: 60 * 60_000 },
+} as const;
+/** Open block pages share one copy of this browser's access requests for this long (eGuard allows 300 reads per 15 minutes). */
+export const REQUESTS_FRESH_MS = 15_000;
 
 /** Counts and switches only: the popup shows what kind of protection is set, never which sites. */
 export function summarize(
@@ -42,9 +59,11 @@ export function summarize(
   now: Date,
   blockedToday: Record<string, number> = {},
 ): PolicySummary {
+  const youtube = youtubeRestrictHeader(p);
   return {
     safeSearch: p.safeSearch,
     safeBrowsing: p.safeBrowsing,
+    youtubeRestrict: youtube === "Strict" ? "STRICT" : youtube === "Moderate" ? "MODERATE" : "OFF",
     blockedCategories: p.blockedCategories.length,
     categories: [...p.blockedCategories],
     blockedToday,
@@ -59,6 +78,14 @@ export function summarize(
         }
       : null,
   };
+}
+
+/** Where the block page can send a child to search: engines with SafeSearch that the policy lets them open. */
+function searchableEngines(p: BrowserProtectionPolicy, now: Date): string[] {
+  const categoryOf = categoryIndex(p);
+  return SAFE_SEARCH_ENGINES.filter(
+    (e) => evaluateUrl(p, `https://${e.host}/`, { now, categoryOf }).decision !== "BLOCK",
+  ).map(engineDomain);
 }
 
 export class UserFacingError extends Error {
@@ -194,7 +221,7 @@ export function createService(d: ServiceDeps) {
     const res = await fetchPolicy(d.tokens);
 
     if (!res.ok) {
-      // A confirmed removal already forgot the installation (onRevoked); an unconfirmed one is recorded like any error
+      // A verified removal already forgot the installation (onRevoked); any other refusal is recorded like any error
       if (res.kind === "unauthorized" && !(await d.state.installation.get())) return;
       await d.state.sync.set({
         ...prev,
@@ -205,25 +232,41 @@ export function createService(d: ServiceDeps) {
       return;
     }
 
-    const { policy: incoming, signature, keyId } = res.data;
+    const { policy: incoming, signature, keyId, names } = res.data;
     const current = await loadPolicy();
+    const floor = Math.max((await d.state.policyFloor.get()) ?? 0, current?.policy.version ?? 0);
     const reject = async (why: string) => {
       log("policy_rejected", { why, incoming: incoming.version, current: current?.policy.version });
-      const message =
-        "eGuard received a policy this browser couldn't accept. Your current protection stays active.";
+      const message = "eGuard sent family settings this browser couldn't accept.";
       await d.state.sync.set({
         ...prev,
         lastAttemptAt: attemptAt,
-        lastError: { kind: "invalid_response", message, at: attemptAt },
+        lastError: { kind: "refused", message, at: attemptAt },
       });
     };
     if (!(await d.verifyPolicy(incoming, signature))) return reject("bad_signature");
     if (incoming.installationId !== installation.installationId) return reject("installation_mismatch");
-    if (current && incoming.version < current.policy.version) return reject("version_rollback");
+    if (incoming.version < floor) return reject("version_rollback");
 
-    if (!current || incoming.version > current.policy.version) {
+    // The same version can still change: eGuard's category lists are updated, and expired approvals drop out,
+    // without the parent editing anything. It's signed for this installation, so the newer copy is taken.
+    if (
+      !current ||
+      incoming.version > current.policy.version ||
+      canonicalJson(incoming) !== canonicalJson(current.policy)
+    ) {
       await d.state.policy.set({ policy: incoming, signature, keyId, receivedAt: attemptAt });
+      if (incoming.version > floor) await d.state.policyFloor.set(incoming.version);
       log("policy_updated", { version: incoming.version });
+    }
+    // A child or family renamed since pairing: show the names as they are now
+    if (
+      names &&
+      (names.childName !== installation.childName ||
+        names.familyName !== installation.familyName ||
+        names.deviceName !== installation.deviceName)
+    ) {
+      await d.state.installation.set({ ...installation, ...names });
     }
     await d.state.sync.set({ lastAttemptAt: attemptAt, lastSuccessAt: attemptAt, lastError: null });
     await enforce();
@@ -349,6 +392,25 @@ export function createService(d: ServiceDeps) {
     });
   }
 
+  // Every block page reads this browser's requests, and waiting ones poll it, so they share one recent copy
+  let requestsCache: { installationId: string; at: number; requests: AccessRequest[] } | null = null;
+
+  /**
+   * This browser's recent access requests. If eGuard can't answer (offline, too many reads), the last list it gave is
+   * used: a request still waiting mustn't read as never sent, offering "Ask a parent" again.
+   */
+  async function recentRequests(installationId: string): Promise<AccessRequest[] | null> {
+    const cached = requestsCache?.installationId === installationId ? requestsCache : null;
+    if (cached && now() - cached.at < REQUESTS_FRESH_MS) return cached.requests;
+    const res = await listAccessRequests(d.tokens);
+    if (!res.ok) {
+      log("requests_not_read", { kind: res.kind });
+      return cached?.requests ?? null;
+    }
+    requestsCache = { installationId, at: now(), requests: res.data.requests };
+    return res.data.requests;
+  }
+
   /** Everything the block page shows, worked out here from the verified policy (the page is never trusted). */
   async function blockInfo(url: string): Promise<BlockInfo> {
     const host = httpHost(url);
@@ -370,12 +432,12 @@ export function createService(d: ServiceDeps) {
             : ev.reason.type === "UNKNOWN_SITE"
               ? { type: "UNKNOWN_SITE" }
               : ev.reason.type === "SAFE_SEARCH"
-                ? { type: "SAFE_SEARCH" }
+                ? { type: "SAFE_SEARCH", engines: searchableEngines(policy.policy, new Date(now())) }
                 : null;
     let request: BlockInfo["request"] = null;
     if (ev.decision !== "ALLOW" && installation) {
-      const res = await listAccessRequests(d.tokens);
-      const latest = res.ok ? res.data.requests.find((r) => domainCovers(r.domain, host)) : undefined;
+      const requests = await recentRequests(installation.installationId);
+      const latest = requests?.find((r) => domainCovers(r.domain, host));
       if (latest) request = { status: latest.status, duration: latest.duration };
     }
     return { url, host, decision: ev.decision, reason, childName, request };
@@ -384,10 +446,11 @@ export function createService(d: ServiceDeps) {
   /** "Continue" on a warning. Refused for anything the policy blocks outright. */
   async function continueToSite(url: string): Promise<void> {
     const info = await blockInfo(url);
-    if (info.decision !== "WARN") {
+    const policy = await loadPolicy();
+    if (info.decision !== "WARN" || !policy) {
       throw new UserFacingError("This site is blocked by your family's settings.", "NOT_ALLOWED");
     }
-    await d.enforcement.allowForAWhile(info.host, new Date(now()));
+    await d.enforcement.allowForAWhile(info.host, new Date(now()), policy.policy);
     log("warning_continued");
   }
 
@@ -399,13 +462,30 @@ export function createService(d: ServiceDeps) {
     const res = await createAccessRequest(d.tokens, { domain: host, reason });
     if (!res.ok)
       throw new UserFacingError(res.message, res.kind === "rate_limited" ? "RATE_LIMITED" : "REQUEST_FAILED");
-    return blockInfo(url);
+    requestsCache = null; // the list changed
+    const info = await blockInfo(url);
+    // The list may not have answered: the request just made is still waiting, not missing (no second "Ask")
+    return info.request
+      ? info
+      : { ...info, request: { status: res.data.request.status, duration: res.data.request.duration } };
   }
 
   /** "Check again" on the block page: fetch the latest policy (a parent may have just said yes), then re-evaluate. */
   async function checkAccess(url: string): Promise<BlockInfo> {
-    if (await d.state.installation.get())
-      await syncPolicy().catch((err: unknown) => log("check_sync_failed", { error: String(err) }));
+    const installation = await d.state.installation.get();
+    const host = httpHost(url);
+    if (installation && host) {
+      // A parent answered after the last sync: the approval is in a policy this browser hasn't got, so no waiting
+      const latest = (await recentRequests(installation.installationId))?.find((r) =>
+        domainCovers(r.domain, host),
+      );
+      const synced = (await d.state.sync.get())?.lastSuccessAt;
+      const answeredSince =
+        !!latest?.decidedAt && (!synced || Date.parse(latest.decidedAt) > Date.parse(synced));
+      if (answeredSince || (await allowManual("sync"))) {
+        await syncPolicy().catch((err: unknown) => log("check_sync_failed", { error: String(err) }));
+      }
+    }
     return blockInfo(url);
   }
 
@@ -469,7 +549,7 @@ export function createService(d: ServiceDeps) {
    * Runs the self-checks and tells eGuard when the result changed, when `force`d (a parent pressed Run health
    * check), or at least every REPORT_EVERY_MS. If eGuard can't be reached, the next check tries again.
    */
-  async function reportHealth(force = false): Promise<void> {
+  async function reportHealth(force = false, opts: { offline?: boolean } = {}): Promise<void> {
     if (!(await d.state.installation.get())) return;
     const status = await getStatus();
     const prev = await d.state.health.get();
@@ -478,13 +558,17 @@ export function createService(d: ServiceDeps) {
       state: status.state,
       policyVersion: status.policyVersion,
       checks: status.checks.map((c) => ({ id: c.id, status: c.status })),
+      // In the key too: an extension or browser update is reported at once
+      extensionVersion: d.extensionVersion,
+      browserVersion: d.browser.version,
     };
     const key = reportKey(body);
     const due =
-      force ||
-      !prev?.lastReportAt ||
-      key !== prev.lastReportKey ||
-      now() - Date.parse(prev.lastReportAt) >= REPORT_EVERY_MS;
+      !opts.offline &&
+      (force ||
+        !prev?.lastReportAt ||
+        key !== prev.lastReportKey ||
+        now() - Date.parse(prev.lastReportAt) >= REPORT_EVERY_MS);
     let sent = false;
     if (due) {
       const res = await postHealth(d.tokens, body);
@@ -497,29 +581,65 @@ export function createService(d: ServiceDeps) {
     );
   }
 
-  /** "Run health check": fetch the latest policy, re-apply everything, check it and report it now. */
+  /**
+   * Counts one press of a button that reaches eGuard, and says whether it's within MANUAL_LIMITS. Kept in session
+   * storage, so the worker stopping between presses doesn't start the count again.
+   */
+  async function allowManual(kind: keyof typeof MANUAL_LIMITS): Promise<boolean> {
+    const { max, windowMs } = MANUAL_LIMITS[kind];
+    const all = (await d.state.manualPresses.get()) ?? { sync: [], report: [] };
+    const recent = all[kind].filter((t) => now() - t < windowMs && t <= now());
+    if (recent.length >= max) {
+      log("manual_limited", { kind });
+      return false;
+    }
+    await d.state.manualPresses.set({ ...all, [kind]: [...recent, now()] });
+    return true;
+  }
+
+  /**
+   * "Run health check": fetch the latest policy, re-apply everything, check it and report it now. Pressed over and over
+   * (MANUAL_LIMITS), the checks still run here and only a changed result is sent.
+   */
   async function runHealthCheck(): Promise<void> {
     if (!(await d.state.installation.get())) {
       await enforce(); // clears anything left over from an earlier connection
       await d.state.health.set({ lastCheckAt: iso() });
       return;
     }
-    await syncPolicy();
+    if (await allowManual("sync")) await syncPolicy();
     await enforce();
-    await reportHealth(true);
+    await reportHealth(await allowManual("report"));
   }
 
-  /** Every sync alarm: the latest policy, then the checks (reported if they changed) and finished days' counts. */
+  /** "Sync now" in the popup. */
+  async function syncNow(): Promise<void> {
+    if (!(await d.state.installation.get())) return syncPolicy(); // says to connect first
+    if (!(await allowManual("sync"))) {
+      throw new UserFacingError(
+        "eGuard checked for new settings many times just now. It checks again by itself within 5 minutes.",
+        "RATE_LIMITED",
+      );
+    }
+    await syncPolicy();
+  }
+
+  /**
+   * Every sync alarm: the latest policy, then the checks (reported if they changed) and finished days' counts. When
+   * eGuard couldn't be reached just now (the sign-in already retried), the checks still run but nothing more is sent.
+   */
   async function periodic(): Promise<void> {
     if (!(await d.state.installation.get())) return;
     await syncPolicy();
-    await reportHealth();
-    await sendDailyCounts();
+    const offline = isOffline((await d.state.sync.get())?.lastError?.kind);
+    await reportHealth(false, { offline });
+    if (!offline) await sendDailyCounts();
   }
 
   return {
     getStatus,
     syncPolicy,
+    syncNow,
     enforce,
     onNavigationError,
     blockInfo,
